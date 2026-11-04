@@ -19,6 +19,7 @@ const LIFT_MAX = 2.6; // highest a grab can lift, keeps the dough inside the sur
 const CEIL_Y = 3.0; // a fling stops here instead of leaving the grid
 const BACK_Z = -1.45; // invisible wall just behind the dough, it never drifts up the frame
 const TEAR_MAX = 2.8; // longest a link may stretch at any moment, relative to its rest length
+const SPAN_MAX = 2.6; // and relative to its original length, so stretching again never opens gaps the skin cannot cover
 const LINK_SHELL_CORE = 0.32;
 const LINK_CORE = 0.34;
 const CORE_STEP = 0.2;
@@ -27,9 +28,10 @@ const SKIP_COLLIDE = 0.4;
 const STICK = 0.6; // how hard the bench holds a touching particle down, per substep
 export const GRIP = { fold: 0.85, throw: 0.3, rest: 0.6 }; // sideways drag on the bench, per substep
 const BREAK = 0.06;
+const BREAK_HELD = 0.3; // while folding the bottom clings this far before it peels, so a pull stretches instead of lifting a slab
 const PIN_SLIP = 0.22; // how far a pinned base particle stretches sideways before it slips
 const PIN_GIVE = 0.15; // share of the pull a pinned particle follows each substep // how far a stuck particle stretches before it lets go
-const GRAB = { along: 0.85, deep: 0.38, tall: 0.6 }; // half sizes of the grabbed strip
+const GRAB = { along: 0.85, deep: 0.26, tall: 0.6 }; // half sizes of the grabbed strip
 const GRAB_PULL = 0.45;
 const SLEEP_SPEED = 0.06;
 const HASH_SIZE = 4096;
@@ -316,7 +318,7 @@ export class DoughSim {
   }
 
   private links_(h: number) {
-    const { p, ca, cb, rest, comp } = this;
+    const { p, ca, cb, rest, rest0, comp } = this;
     const ih2 = 1 / (h * h);
     for (let k = 0; k < ca.length; k++) {
       const i = ca[k] * 3,
@@ -327,10 +329,9 @@ export class DoughSim {
       const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
       if (len < 1e-6) continue;
       // past the hard limit the link stops being soft, so a fast yank can't tear bits off
-      const hard = len > rest[k] * TEAR_MAX;
-      const corr = hard
-        ? (len - rest[k] * TEAR_MAX) / (len * 2)
-        : (len - rest[k]) / (len * (2 + comp[k] * ih2));
+      const lim = Math.min(rest[k] * TEAR_MAX, rest0[k] * SPAN_MAX);
+      const hard = len > lim;
+      const corr = hard ? (len - lim) / (len * 2) : (len - rest[k]) / (len * (2 + comp[k] * ih2));
       p[i] -= dx * corr;
       p[i + 1] -= dy * corr;
       p[i + 2] -= dz * corr;
@@ -473,6 +474,7 @@ export class DoughSim {
     const keep = 1 - STICK;
     const holding = this.pinned;
     const slip2 = PIN_SLIP * PIN_SLIP;
+    const brk = holding ? BREAK_HELD : BREAK;
     for (let i = 0; i < n; i++) {
       const o = i * 3;
       if (p[o + 1] > CEIL_Y) p[o + 1] = CEIL_Y;
@@ -505,7 +507,7 @@ export class DoughSim {
       }
       // upward: held until pulled past BREAK
       const dy = p[o + 1] - RADIUS;
-      if (dy > BREAK) {
+      if (dy > brk) {
         stuck[i] = 0;
         continue;
       }

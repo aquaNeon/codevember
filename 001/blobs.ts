@@ -13,6 +13,7 @@ export const BLOB = {
   fill: 0.2, // spacing of the filler blobs
   fillMax: 600, // filler budget per frame; only strands use it
   strand: 5, // a particle with fewer short links than this is part of a strand
+  gap: 0.5, // any link longer than this opens a hole in a stretched sheet and always gets filler
   cell: 0.07, // grid spacing, smaller is smoother and slower
 };
 
@@ -124,12 +125,20 @@ export class Blobs {
       let total = 0;
       for (let k = 0; k < la.length; k++) {
         const len = this.linkLen(x, la[k], lb[k]);
-        if (len > BLOB.bridge && (nb[la[k]] < BLOB.strand || nb[lb[k]] < BLOB.strand)) total += len;
+        if (
+          len > BLOB.bridge &&
+          (len > BLOB.gap || nb[la[k]] < BLOB.strand || nb[lb[k]] < BLOB.strand)
+        )
+          total += len;
       }
       const gap = Math.max(BLOB.fill, total / BLOB.fillMax);
       for (let k = 0; k < la.length; k++) {
         const len = this.linkLen(x, la[k], lb[k]);
-        if (len <= BLOB.bridge || (nb[la[k]] >= BLOB.strand && nb[lb[k]] >= BLOB.strand)) continue;
+        if (
+          len <= BLOB.bridge ||
+          (len <= BLOB.gap && nb[la[k]] >= BLOB.strand && nb[lb[k]] >= BLOB.strand)
+        )
+          continue;
         const i = la[k] * 3,
           j = lb[k] * 3;
         const steps = Math.max(2, Math.ceil(len / gap));
@@ -154,7 +163,7 @@ export class Blobs {
     for (let p = 0; p < BLOB.blur; p++) this.smooth();
 
     // MARCH
-    const { pos, nor, ev, en, cv, gx, gy, gz } = this;
+    const { pos, nor, ev, en, cv, gx, gy, gz, nz } = this;
     const iso = BLOB.iso;
     const c = BLOB.cell;
     const x0 = box[0],
@@ -185,9 +194,13 @@ export class Blobs {
               cj = j + CORNER[n * 3 + 1],
               ck = k + CORNER[n * 3 + 2];
             const q = ck * sxy + cj * nx + ci;
-            gx[n] = field[q - 1] - field[q + 1];
-            gy[n] = field[q - nx] - field[q + nx];
-            gz[n] = field[q - sxy] - field[q + sxy];
+            // two cells wide where it fits: smoother shading, the single blobs stop reading
+            const sx = ci > 1 && ci < nx - 2 ? 2 : 1,
+              sy = cj > 1 && cj < ny - 2 ? 2 : 1,
+              sz = ck > 1 && ck < nz - 2 ? 2 : 1;
+            gx[n] = field[q - sx] - field[q + sx];
+            gy[n] = field[q - sy * nx] - field[q + sy * nx];
+            gz[n] = field[q - sz * sxy] - field[q + sz * sxy];
           }
           for (let e = 0; e < 12; e++) {
             if (!(bits & (1 << e))) continue;
