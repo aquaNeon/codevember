@@ -18,7 +18,9 @@ import {
   Scene,
   Vector3,
   WebGLRenderer,
+  DoubleSide,
   type BufferGeometry,
+  type Texture,
   type Material,
 } from "three";
 import { fracture, prism } from "./fracture";
@@ -30,12 +32,12 @@ const MAX_DPR = 2;
 const MAX_DT_S = 1 / 20;
 const FOV_DEG = 30;
 const CAM_PITCH_RAD = 0.22;
-const CAM_FIT = 4.0; // world width that must stay in frame
+const CAM_FIT = 4.4; // world width that must stay in frame
 const TARGET_Y = 0.95;
-const PANE_W = 2.4;
-const PANE_H = 1.5;
+const PANE_W = 1.6;
+const PANE_H = 2.1; // portrait, like a window
 const PANE_T = 0.02;
-const PANE_Y = 1.3;
+const PANE_Y = 1.38;
 const WALL_Z = -40; // no wall, pieces fly free
 const BALL_R = 0.045;
 const REST = new Vector3(0, 1.08, 3.6); // empty pouch, between camera and glass
@@ -46,10 +48,19 @@ const AIM_GAIN = 2.6;
 const AIM_MARGIN_M = 0.08;
 const TAP_MS = 260;
 const TAP_PX = 6;
-const SCRUB_GAIN = 1.2; // one canvas width scrubs this many bursts
+const HOLD_MS = 160; // press longer than this and time runs backward
+const HOLD_RATE = 1.6;
 const REWIND_RATE = 2.4;
 const KEY_STEP_S = 0.1;
-const SHADOW_PX = 2048; // fine enough to draw the leading
+const SHADOW_PX = 1024;
+const FLOOR_LIFT_M = "0.002";
+const LIGHT_STRENGTH = "0.24"; // how strongly the glass colours the floor
+const PRISM_UV = "0.004"; // how far the floor light splits into red, green and blue
+const DISPERSION = "0.7"; // how much reflections break into a spectrum
+const SHEEN = "0.6"; // window streak strength
+const SHEEN_AT = ["-0.02", "0.08"]; // where the wide and thin streak sit across the pane
+const LIGHT_CLEAR = "0.02";
+const LIGHT_DARKEN = "0.85";
 const GLOW = 0.3; // how much the coloured glass glows
 const SIM_BUDGET_MS = 3; // simulation work allowed per frame
 
@@ -68,8 +79,9 @@ export class Pane {
   private scene = new Scene();
   private camera = new PerspectiveCamera(FOV_DEG, 1, 0.1, 40);
   private material: MeshStandardMaterial;
-  private whole: BatchedMesh;
-  private shards: BatchedMesh | null = null;
+  private light: MeshBasicMaterial;
+  private whole: Batch;
+  private shards: Batch | null = null;
   private burst: Burst | null = null;
   private sling: Sling;
   private reticle: Mesh;
@@ -94,11 +106,11 @@ export class Pane {
   private downX = 0;
   private downY = 0;
   private downT = 0;
-  private downTime = 0;
-  private scrubbing = false;
+  private holding = false;
   private aiming = false;
   private grab = new Vector3();
   private pouch = REST.clone();
+  private launch = REST.clone();
   private aimX = 0;
   private aimY = 0;
   private power = 0;
@@ -132,7 +144,7 @@ export class Pane {
     key.shadow.mapSize.set(SHADOW_PX, SHADOW_PX);
     key.shadow.radius = 3;
     key.shadow.blurSamples = 12;
-    key.shadow.intensity = 0.7;
+    key.shadow.intensity = 0.3;
     key.shadow.bias = -0.0004;
     key.shadow.normalBias = 0.01;
     const sc = key.shadow.camera;
@@ -165,13 +177,10 @@ export class Pane {
       roughness: 0.05,
       metalness: 0,
       envMapIntensity: 1.4,
-      // the shadow pass copies this onto its depth material, so only the lead casts
-      alphaTest: 0.9,
     });
     this.material.onBeforeCompile = (sh) => {
       sh.fragmentShader = sh.fragmentShader
         .replace("#include <map_fragment>", "")
-        .replace("#include <alphatest_fragment>", "")
         .replace(
           "#include <color_fragment>",
           `#include <color_fragment>
@@ -188,10 +197,26 @@ export class Pane {
         // reflections stay bright where the glass itself is see-through
         .replace(
           "#include <opaque_fragment>",
-          "gl_FragColor = vec4(outgoingLight, clamp(diffuseColor.a + dot(totalSpecular, vec3(0.4)), 0.0, 1.0));",
+          `// FLARE
+          // reflections and edge glints split into a spectrum that drifts across the glass
+          float hue = dot(gl_FragCoord.xy, vec2(0.0011, 0.0007)) + normal.x * 0.9 + normal.y * 0.6;
+          vec3 spectrum = 0.5 + 0.5 * cos(6.2831 * (hue + vec3(0.0, 0.33, 0.67)));
+          outgoingLight += totalSpecular * (spectrum * 1.8 - 1.0) * ${DISPERSION};
+          // SHEEN
+          // two window streaks seen in reflection, they slide and flash as the glass turns
+          vec3 rw = inverseTransformDirection(reflect(-geometryViewDir, normal), viewMatrix);
+          vec3 sv = dot(rw, vec3(0.86, 0.5, 0.0)) + vec3(-0.006, 0.0, 0.006);
+          vec3 d1 = (sv - ${SHEEN_AT[0]}) / 0.022;
+          vec3 d2 = (sv - ${SHEEN_AT[1]}) / 0.006;
+          vec3 sheen = (exp(-d1 * d1) * 0.35 + exp(-d2 * d2)) * step(0.0, rw.z) * ${SHEEN};
+          outgoingLight += sheen;
+          gl_FragColor = vec4(outgoingLight, clamp(diffuseColor.a + dot(totalSpecular, vec3(0.4)) + dot(sheen, vec3(0.3)), 0.0, 1.0));`,
         );
     };
-    this.disposables.push(art, this.material);
+    // the floor light falls the way the key light points
+    const lightDir = new Vector3().copy(key.position).negate().normalize();
+    this.light = glassLight(art, lightDir);
+    this.disposables.push(art, this.material, this.light);
 
     // whole pane is a one-piece batch so it shares the shard program
     const hw = PANE_W / 2;
@@ -199,10 +224,12 @@ export class Pane {
     this.whole = batch(
       [prism([-hw, -hh, hw, -hh, hw, hh, -hw, hh], PANE_T, 0, 0, PANE_W, PANE_H)],
       this.material,
+      this.light,
     );
     this.whole.position.y = PANE_Y;
     this.scene.add(this.whole);
-    this.disposables.push(this.whole);
+    const whole = this.whole;
+    this.disposables.push({ dispose: () => release(whole) });
 
     // SLING
     this.sling = new Sling(REST, BALL_R);
@@ -260,6 +287,7 @@ export class Pane {
 
   // PUBLIC
   fire(x: number, y: number, power: number, from: Vector3) {
+    this.launch.copy(from);
     const shards = fracture(PANE_W, PANE_H, x, y);
     this.burst = simulate(
       shards,
@@ -271,17 +299,30 @@ export class Pane {
     this.shards = batch(
       shards.map((s) => prism(s.poly, PANE_T, s.x, s.y, PANE_W, PANE_H)),
       this.material,
+      this.light,
     );
     this.scene.add(this.shards);
     this.t = 0;
     this.play(1);
   }
 
-  // tap after a shot: flip direction, or start from where it is held
+  // tap after a shot: pause, or play on from where it is held
   toggle() {
     if (!this.fired) return;
-    if (this.rate !== 0) this.play(this.rate > 0 ? -REWIND_RATE : 1);
-    else this.play(this.t >= DURATION_S ? -REWIND_RATE : 1);
+    if (this.rate !== 0) this.play(0);
+    else if (this.t < DURATION_S) this.play(1);
+  }
+
+  seek(t: number) {
+    this.scrub(t);
+  }
+
+  get shot() {
+    return !!this.burst;
+  }
+
+  get duration() {
+    return DURATION_S;
   }
 
   rewind() {
@@ -290,7 +331,7 @@ export class Pane {
 
   private play(rate: number) {
     this.rate = rate;
-    if (this.reducedMotion) {
+    if (this.reducedMotion && rate !== 0) {
       if (rate > 0) this.burst?.advance(DURATION_S, 0);
       this.t = rate > 0 ? DURATION_S : 0;
       this.rate = 0;
@@ -308,7 +349,7 @@ export class Pane {
   private drop() {
     if (!this.shards) return;
     this.scene.remove(this.shards);
-    this.shards.dispose();
+    release(this.shards);
     this.shards = null;
   }
 
@@ -343,9 +384,9 @@ export class Pane {
     this.downX = e.clientX;
     this.downY = e.clientY;
     this.downT = performance.now();
-    this.downTime = this.t;
-    this.scrubbing = false;
+    this.holding = this.fired;
     this.aiming = !this.fired;
+    if (this.holding) this.wake();
     if (this.aiming) {
       this.onSling(e.clientX, e.clientY, this.grab);
       this.aim(e.clientX, e.clientY);
@@ -354,21 +395,10 @@ export class Pane {
 
   private move = (e: PointerEvent) => {
     if (e.pointerId !== this.pointer) {
-      if (this.pointer === -1) this.canvas.style.cursor = this.fired ? "ew-resize" : "grab";
+      if (this.pointer === -1) this.canvas.style.cursor = this.fired ? "pointer" : "grab";
       return;
     }
-    if (this.aiming) {
-      this.aim(e.clientX, e.clientY);
-      return;
-    }
-    const dx = e.clientX - this.downX;
-    if (!this.scrubbing && Math.abs(dx) > TAP_PX) {
-      this.scrubbing = true;
-      this.downX = e.clientX;
-      this.downTime = this.t;
-    }
-    if (this.scrubbing)
-      this.scrub(this.downTime + (dx / this.rect.width) * DURATION_S * SCRUB_GAIN);
+    if (this.aiming) this.aim(e.clientX, e.clientY);
   };
 
   // AIM
@@ -408,11 +438,16 @@ export class Pane {
       this.wake();
       return;
     }
+    if (!this.holding) return;
+    this.holding = false;
+    // a long press was rewinding, letting go stops it where it is
+    if (this.rate < 0) {
+      this.play(0);
+      return;
+    }
     const tap =
-      !this.scrubbing &&
       performance.now() - this.downT < TAP_MS &&
       Math.hypot(e.clientX - this.downX, e.clientY - this.downY) < TAP_PX;
-    this.scrubbing = false;
     if (tap) this.toggle();
   };
 
@@ -448,7 +483,10 @@ export class Pane {
     this.last = now;
     if (!this.sized) this.resize();
 
-    let active = false;
+    let active = this.holding;
+    // HOLD
+    if (this.holding && this.rate >= 0 && now - this.downT > HOLD_MS && this.t > 0)
+      this.play(-HOLD_RATE);
     const b = this.burst;
     if (b && !b.done) {
       b.advance(this.t + dt * Math.max(this.rate, 0), SIM_BUDGET_MS);
@@ -479,7 +517,7 @@ export class Pane {
     this.whole.visible = !cracked;
     if (fired && this.burst) this.burst.sampleBall(this.t, p);
     else p.copy(this.aiming ? this.pouch : REST);
-    this.sling.pose(p, !fired);
+    this.sling.pose(p, !fired, this.launch, this.t);
 
     const s = this.shards;
     const b = this.burst;
@@ -488,7 +526,7 @@ export class Pane {
     if (!cracked) return;
     for (let i = 0; i < b.n; i++) {
       b.sample(i, this.t, p, q);
-      s.setMatrixAt(i, m4.compose(p, q, ONE));
+      place(s, i, m4.compose(p, q, ONE));
     }
   }
 
@@ -553,21 +591,98 @@ export class Pane {
 }
 
 // one draw for every piece, each with its own matrix
-function batch(geos: BufferGeometry[], material: Material) {
+// a glass piece plus its coloured light on the floor, sharing one matrix per piece
+interface Batch extends BatchedMesh {
+  light: BatchedMesh;
+}
+
+// one draw for every piece, each with its own matrix
+function batch(geos: BufferGeometry[], material: Material, light: Material) {
   let verts = 0;
   let index = 0;
   for (const g of geos) {
     verts += g.getAttribute("position").count;
     index += g.index?.count ?? 0;
   }
-  const b = new BatchedMesh(geos.length, verts, index, material);
+  const b = new BatchedMesh(geos.length, verts, index, material) as Batch;
+  const l = new BatchedMesh(geos.length, verts, index, light);
   for (const g of geos) {
     b.addInstance(b.addGeometry(g));
+    l.addInstance(l.addGeometry(g));
     g.dispose();
   }
-  b.castShadow = true;
   b.frustumCulled = false; // pieces fly, the per-instance cull still runs
+  // the light lands far from the piece, so its bounds say nothing
+  l.frustumCulled = false;
+  l.perObjectFrustumCulled = false;
+  l.sortObjects = false;
+  l.renderOrder = -1;
+  b.add(l);
+  b.light = l;
   return b;
+}
+
+function place(b: Batch, i: number, m: Matrix4) {
+  b.setMatrixAt(i, m);
+  b.light.setMatrixAt(i, m);
+}
+
+function release(b: Batch) {
+  b.light.dispose();
+  b.dispose();
+}
+
+// LIGHT THROUGH GLASS
+// every piece flattened onto the floor along the key light, tinted by its paint
+function glassLight(map: Texture, dir: Vector3) {
+  const m = new MeshBasicMaterial({
+    map,
+    transparent: true,
+    depthWrite: false,
+    side: DoubleSide,
+  });
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.uLight = { value: dir };
+    sh.vertexShader = sh.vertexShader
+      .replace(
+        "void main() {",
+        `uniform vec3 uLight;
+      varying float vFront;
+      void main() {`,
+      )
+      .replace(
+        "#include <project_vertex>",
+        `vFront = normal.z;
+        vec4 world = vec4(transformed, 1.0);
+        #ifdef USE_BATCHING
+          world = batchingMatrix * world;
+        #endif
+        world = modelMatrix * world;
+        world.xyz -= uLight * ((world.y - ${FLOOR_LIFT_M}) / uLight.y);
+        vec4 mvPosition = viewMatrix * world;
+        gl_Position = projectionMatrix * mvPosition;`,
+      );
+    sh.fragmentShader = sh.fragmentShader
+      .replace(
+        "void main() {",
+        `varying float vFront;
+      void main() {`,
+      )
+      .replace(
+        "#include <opaque_fragment>",
+        `if (vFront < 0.5) discard; // one layer per piece, the front face
+        // PRISM
+        // each channel lands a little apart, so every edge gets a rainbow fringe
+        vec2 split = vec2(${PRISM_UV}, ${PRISM_UV} * 0.5);
+        vec4 pr = texture2D(map, vMapUv + split);
+        vec4 pg = texture2D(map, vMapUv);
+        vec4 pb = texture2D(map, vMapUv - split);
+        vec3 col = pg.rgb + (vec3(pr.r, pg.g, pb.b) - pg.rgb) * 2.2;
+        float a = (pr.a + pg.a + pb.a) / 3.0;
+        gl_FragColor = vec4(col * ${LIGHT_DARKEN}, ${LIGHT_CLEAR} + a * ${LIGHT_STRENGTH});`,
+      );
+  };
+  return m;
 }
 
 // STUDIO

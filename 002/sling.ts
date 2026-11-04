@@ -2,11 +2,14 @@ import {
   CanvasTexture,
   CatmullRomCurve3,
   CylinderGeometry,
+  DoubleSide,
   Group,
   LatheGeometry,
   Mesh,
   MeshPhysicalMaterial,
+  MeshBasicMaterial,
   MeshStandardMaterial,
+  PlaneGeometry,
   Quaternion,
   RepeatWrapping,
   SphereGeometry,
@@ -27,16 +30,26 @@ const ARM_SEGS = 40;
 const ARM_RADIAL = 14;
 const WRAP_M = 0.04;
 const BAND_R = 0.0075;
-const POUCH_HALF_M = 0.05; // bands meet the pouch either side of the ball
-const STRAP_R = 0.016;
-const SLACK_M = 0.05; // empty pouch hangs back a little
+const BAND_SEGS = 10;
+const BAND_SLACK = 1.12; // natural band length over the stretch of the hanging pouch
+const POUCH_GAP = 1.12; // pouch radius over ball radius
+const POUCH_TALL = 1.3; // pouch height as an angle around the ball, radians
+const POUCH_HOLE = 0.5; // half the window in the pouch, radians
+const HANG = new Vector3(0, -0.13, 0.03); // where the empty pouch comes to rest, from REST
+const SWING_HZ = 2.4; // band recoil after the shot
+const SWING_DAMP = 4.5;
+const FLAT = 0.3; // empty pouch folds flat to this depth
 const WALNUT = "#6a3a1f";
+const BLOB_A = 0.55; // contact shadow darkness on the ground
+const BLOB_FADE_M = 0.5; // gone by this height
 
 const UP = new Vector3(0, 1, 0);
 const a = new Vector3();
 const l = new Vector3();
 const r = new Vector3();
 const c = new Vector3();
+const p0 = new Vector3();
+const p1 = new Vector3();
 const rq = new Quaternion();
 
 // SLING
@@ -44,9 +57,14 @@ const rq = new Quaternion();
 export class Sling {
   readonly group = new Group();
   readonly ball: Mesh;
-  private pouch: Mesh;
-  private tips: Vector3[];
-  private bands: Mesh[];
+  private blob: Mesh;
+  private blobMat: MeshBasicMaterial;
+  private pouch: Mesh[] = [];
+  private hole: Mesh;
+  private pouchR: number;
+  private anchors: Vector3[] = [];
+  private bands: Mesh[][] = [[], []];
+  private bandM = 0;
   private disposables: { dispose(): void }[] = [];
 
   constructor(
@@ -62,7 +80,11 @@ export class Sling {
     const armWood = polished(armGrain);
     const twine = new MeshStandardMaterial({ color: 0xe2d3b2, roughness: 0.9 });
     const latex = new MeshStandardMaterial({ color: 0xc98a3a, roughness: 0.38 });
-    const leather = new MeshStandardMaterial({ color: 0x24211e, roughness: 0.7 });
+    const leather = new MeshStandardMaterial({
+      color: 0x24211e,
+      roughness: 0.7,
+      side: DoubleSide,
+    });
     const steel = new MeshStandardMaterial({ color: 0xdadada, metalness: 1, roughness: 0.2 });
     this.disposables.push(grain, armGrain, wood, armWood, twine, latex, leather, steel);
 
@@ -70,7 +92,6 @@ export class Sling {
     const z = rest.z;
     const tipY = rest.y + FORK_RISE_M;
     const crotchY = tipY - ARM_M;
-    this.tips = [new Vector3(x - FORK_SPAN_M, tipY, z), new Vector3(x + FORK_SPAN_M, tipY, z)];
 
     const add = <T extends { dispose(): void }>(geo: T, m: Mesh) => {
       this.disposables.push(geo);
@@ -105,49 +126,124 @@ export class Sling {
     const crotch = add(knob, new Mesh(knob, wood));
     crotch.position.set(x, crotchY + 0.01, z);
     crotch.scale.set(0.05, 0.045, 0.04);
+    const wrapR = ARM_TIP_R * 1.18;
+    const wrapGeo = new CylinderGeometry(wrapR, wrapR, WRAP_M, 16);
+    const tan = new Vector3();
     for (const side of [-1, 1]) {
+      const tip = new Vector3(x + side * FORK_SPAN_M, tipY, z);
       const curve = new CatmullRomCurve3([
         new Vector3(x, crotchY - 0.01, z),
         new Vector3(x + side * 0.05, crotchY + 0.07, z),
         new Vector3(x + side * FORK_SPAN_M * 0.8, crotchY + ARM_M * 0.55, z),
-        new Vector3(x + side * FORK_SPAN_M, tipY, z),
+        tip,
       ]);
       const armGeo = taper(new TubeGeometry(curve, ARM_SEGS, 1, ARM_RADIAL, false), curve);
       add(armGeo, new Mesh(armGeo, armWood));
-      const tip = add(knob, new Mesh(knob, wood));
-      tip.position.set(x + side * FORK_SPAN_M, tipY, z);
-      tip.scale.set(ARM_TIP_R, ARM_TIP_R * 0.6, ARM_TIP_R);
-    }
-    const wrapGeo = new CylinderGeometry(ARM_TIP_R * 1.18, ARM_TIP_R * 1.18, WRAP_M, 16);
-    for (const tip of this.tips) {
+      // a dome the same radius as the tube end, so the tip closes cleanly
+      const cap = add(knob, new Mesh(knob, wood));
+      cap.position.copy(tip);
+      cap.scale.setScalar(ARM_TIP_R);
+      // twine sits just under the tip, along the arm; the band leaves from its front
+      curve.getTangentAt(1, tan);
       const wrap = add(wrapGeo, new Mesh(wrapGeo, twine));
-      wrap.position.copy(tip).setY(tip.y - WRAP_M * 0.7);
-      wrap.rotation.z = Math.sign(tip.x - x) * -0.18; // follows the lean of the arm
+      wrap.position.copy(tip).addScaledVector(tan, -WRAP_M * 0.75);
+      wrap.quaternion.setFromUnitVectors(UP, tan);
+      this.anchors.push(wrap.position.clone().setZ(wrap.position.z + wrapR * 0.55));
     }
 
     // BANDS
     const rod = new CylinderGeometry(1, 1, 1, 10, 1);
-    this.bands = [add(rod, new Mesh(rod, latex)), add(rod, new Mesh(rod, latex))];
-    for (const b of this.bands) b.scale.set(BAND_R, 1, BAND_R);
-    this.pouch = add(rod, new Mesh(rod, leather));
+    for (const chain of this.bands) {
+      for (let i = 0; i < BAND_SEGS; i++) {
+        const seg = add(rod, new Mesh(rod, latex));
+        seg.scale.set(BAND_R, 1, BAND_R);
+        chain.push(seg);
+      }
+    }
+
+    // POUCH
+    // two leather cups hug the ball's sides, the hole between them leaves the steel in view;
+    // once the ball is gone a middle piece closes it and the leather folds flat
+    this.pouchR = ballR * POUCH_GAP;
+    const band = POUCH_TALL / 2;
+    const cup = (from: number, len: number) => {
+      const geo = new SphereGeometry(this.pouchR, 12, 8, from, len, Math.PI / 2 - band, band * 2);
+      return add(geo, new Mesh(geo, leather));
+    };
+    const side = Math.PI / 2 - POUCH_HOLE;
+    this.pouch.push(cup(0, side), cup(Math.PI / 2 + POUCH_HOLE, side));
+    this.hole = cup(side, POUCH_HOLE * 2);
+    this.pouch.push(this.hole);
+
+    c.copy(rest)
+      .add(HANG)
+      .setX(rest.x - this.pouchR);
+    this.bandM = this.anchors[0].distanceTo(c) * BAND_SLACK;
 
     const steelBall = new SphereGeometry(ballR, 24, 16);
     this.ball = add(steelBall, new Mesh(steelBall, steel));
+
+    // CONTACT SHADOW
+    // the real shadow is too small and soft to read, a blob grounds the ball
+    const blobTex = softDot();
+    this.blobMat = new MeshBasicMaterial({
+      map: blobTex,
+      color: 0x1c2a26,
+      transparent: true,
+      depthWrite: false,
+    });
+    const blobGeo = new PlaneGeometry(1, 1);
+    this.blob = new Mesh(blobGeo, this.blobMat);
+    this.blob.rotation.x = -Math.PI / 2;
+    this.blob.renderOrder = -2;
+    this.group.add(this.blob);
+    this.disposables.push(blobTex, this.blobMat, blobGeo);
   }
 
-  // bands run to the pouch, which cradles the ball while it is loaded
-  pose(ball: Vector3, loaded: boolean) {
-    if (loaded) c.copy(ball).setZ(ball.z + this.ballR * 0.75);
-    else c.copy(this.rest).setZ(this.rest.z + SLACK_M);
-    l.copy(c).setX(c.x - POUCH_HALF_M);
-    r.copy(c).setX(c.x + POUCH_HALF_M);
-    span(this.bands[0], this.tips[0], l);
-    span(this.bands[1], this.tips[1], r);
-    // a thin strap behind the ball, so the steel still shows
-    span(this.pouch, l, r);
-    this.pouch.scale.x = STRAP_R;
-    this.pouch.scale.z = STRAP_R * 0.45;
+  // bands run to the pouch; after the shot it recoils from where it was let go,
+  // swings past the fork and drops to hang under it
+  pose(ball: Vector3, loaded: boolean, from = this.rest, since = Infinity) {
+    if (loaded) c.copy(ball);
+    else {
+      const k = Math.exp(-since * SWING_DAMP) * Math.cos(since * SWING_HZ * Math.PI * 2);
+      c.copy(this.rest).add(HANG);
+      c.addScaledVector(a.subVectors(from, c), Number.isFinite(k) ? k : 0);
+    }
+    l.copy(c).setX(c.x - this.pouchR);
+    r.copy(c).setX(c.x + this.pouchR);
+    this.drape(this.bands[0], this.anchors[0], l);
+    this.drape(this.bands[1], this.anchors[1], r);
+    // fold flat only once the ball is clear of the leather
+    const clear = loaded
+      ? 0
+      : Math.min(1, Math.max(0, (ball.distanceTo(c) - this.pouchR) / this.pouchR));
+    this.hole.visible = !loaded;
+    for (const p of this.pouch) {
+      p.position.copy(c);
+      p.scale.set(1, 1, 1 + (FLAT - 1) * clear);
+    }
     this.ball.position.copy(ball);
+    const up = Math.max(0, ball.y - this.ballR);
+    const k = Math.max(0, 1 - up / BLOB_FADE_M);
+    this.blob.visible = k > 0;
+    this.blob.position.set(ball.x, 0.003, ball.z);
+    this.blob.scale.setScalar(this.ballR * (3 + up * 8));
+    this.blobMat.opacity = BLOB_A * k * k;
+  }
+
+  // a band sags under its own weight until it is stretched past its natural length
+  private drape(chain: Mesh[], from: Vector3, to: Vector3) {
+    const d = from.distanceTo(to);
+    const sag = d < this.bandM ? Math.sqrt((3 * d * (this.bandM - d)) / 8) : 0;
+    p0.copy(from);
+    for (let i = 0; i < BAND_SEGS; i++) {
+      const u = (i + 1) / BAND_SEGS;
+      p1.lerpVectors(from, to, u);
+      p1.y -= sag * Math.sin(Math.PI * u);
+      span(chain[i], p0, p1);
+      chain[i].scale.y += BAND_R; // overlap the joints
+      p0.copy(p1);
+    }
   }
 
   dispose() {
@@ -218,4 +314,20 @@ function woodGrain() {
   tex.colorSpace = SRGBColorSpace;
   tex.wrapS = tex.wrapT = RepeatWrapping;
   return tex;
+}
+
+// radial falloff, white so the material colour tints it
+function softDot() {
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = 64;
+  const g = cv.getContext("2d");
+  if (g) {
+    const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grad.addColorStop(0, "rgba(255,255,255,1)");
+    grad.addColorStop(0.4, "rgba(255,255,255,0.6)");
+    grad.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 64, 64);
+  }
+  return new CanvasTexture(cv);
 }

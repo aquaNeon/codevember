@@ -28,6 +28,48 @@
         color: var(--muted);
         text-align: right;
       }
+      /* TIMELINE */
+      .scrub {
+        -webkit-appearance: none;
+        appearance: none;
+        width: min(240px, 60vw);
+        height: 24px;
+        margin: 0;
+        background: none;
+        cursor: pointer;
+        touch-action: none;
+      }
+      .scrub:disabled {
+        opacity: 0.35;
+        cursor: default;
+      }
+      .scrub::-webkit-slider-runnable-track {
+        height: 1px;
+        background: var(--ink);
+      }
+      .scrub::-moz-range-track {
+        height: 1px;
+        background: var(--ink);
+      }
+      .scrub::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 12px;
+        height: 12px;
+        margin-top: -5.5px;
+        border-radius: 50%;
+        background: var(--ink);
+      }
+      .scrub::-moz-range-thumb {
+        width: 12px;
+        height: 12px;
+        border: 0;
+        border-radius: 50%;
+        background: var(--ink);
+      }
+      .scrub:focus-visible {
+        outline: 1px solid var(--ink);
+        outline-offset: 4px;
+      }
       .cv-btn:disabled {
         opacity: 0.35;
         pointer-events: none;
@@ -78,7 +120,7 @@
         <canvas
           data-cv-canvas
           tabindex="0"
-          aria-label="A pane of glass in front of a printed card, a slingshot below. Drag back and let go to shoot it, then drag sideways to scrub the burst through time. Enter shoots or plays, arrow keys step time."
+          aria-label="A pane of glass in front of a printed card, a slingshot below. Drag back and let go to shoot it, then press and hold to rewind. Enter shoots or plays, arrow keys step time."
         ></canvas>
         <div class="still" role="img" aria-label="A pane of glass"></div>
       </div>
@@ -89,8 +131,8 @@
         <span class="mono">No. 002</span>
         <h1>Shatter<em>.</em></h1>
         <p>
-          <em>Break it, then hold the moment.</em> Pull the sling and let go. Drag sideways to scrub
-          the burst back and forth, stop it mid-air.
+          <em>Break it, then hold the moment.</em> Pull the sling and let go. Hold to rewind, or
+          drag the timeline to stop it mid-air.
         </p>
       </section>
 
@@ -101,6 +143,17 @@
           <dt>Pieces</dt>
           <dd data-cv-count>1</dd>
         </dl>
+        <input
+          type="range"
+          class="scrub"
+          data-cv-scrub
+          min="0"
+          max="3.6"
+          step="0.01"
+          value="0"
+          aria-label="Time"
+          disabled
+        />
         <span data-cv-hint aria-live="polite">Pull the sling back, let go</span>
         <button type="button" class="cv-btn" data-cv-rewind disabled>Rewind</button>
       </aside>

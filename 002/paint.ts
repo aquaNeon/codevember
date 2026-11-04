@@ -2,23 +2,34 @@ import { CanvasTexture, SRGBColorSpace } from "three";
 
 const PX_PER_M = 640;
 const LEAD = "rgb(40,37,34)";
-const LEAD_PX = 6;
-const FRAME_PX = 14;
-const QUARRY_PX = 86;
-const BORDER_PX = 74;
-const PETALS = 12;
-// coloured glass stays translucent, lead is the only opaque part
+const LEAD_PX = 5;
+const FRAME_PX = 16;
+const BORDER_PX = 64;
+const RAYS = 22;
+const ARCHES = 8;
+const SPIRAL_TURNS = 2.6;
+// pale ground stays thin, the motif is dense; only lead is fully opaque
 const GLASS = {
-  quarry: "rgba(236,226,196,0.34)",
-  ruby: "rgba(150,16,30,0.9)",
-  cobalt: "rgba(20,44,140,0.9)",
-  amber: "rgba(226,140,20,0.88)",
-  emerald: "rgba(16,100,62,0.9)",
-  violet: "rgba(80,30,112,0.88)",
+  ground: "rgba(242,232,206,0.42)",
+  rayA: "rgba(244,222,168,0.5)",
+  rayB: "rgba(238,200,196,0.48)",
+  lavender: "rgba(170,146,206,0.88)",
+  rose: "rgba(226,146,160,0.88)",
+  saffron: "rgba(236,166,46,0.9)",
+  cream: "rgba(246,234,206,0.7)",
+  coral: "rgba(218,96,70,0.9)",
+  sky: "rgba(140,190,214,0.7)",
+  sage: "rgba(160,186,130,0.72)",
+  mist: "rgba(196,184,222,0.66)",
+  leaf: "rgba(56,116,82,0.9)",
+  leafHi: "rgba(112,160,96,0.9)",
+  gold: "rgba(214,160,40,0.92)",
+  frame: "rgba(232,170,52,0.82)",
 };
 
-// STAINED GLASS
-// a leaded rose in the middle, clear diamond quarries around it, a jewelled border
+// WINDOW
+// art deco frame, an af klint sun of rings with rays, arches below,
+// a fan lotus held between two spirals
 export function paint(w: number, h: number) {
   const c = document.createElement("canvas");
   const W = Math.round(w * PX_PER_M);
@@ -36,129 +47,221 @@ export function paint(w: number, h: number) {
 function draw(g: CanvasRenderingContext2D, W: number, H: number) {
   const b = BORDER_PX;
   const cx = W / 2;
-  const cy = H / 2;
-  const R = H * 0.34;
+  const horizon = H * 0.54;
   g.lineJoin = "round";
   g.lineCap = "round";
+  g.strokeStyle = LEAD;
+  g.lineWidth = LEAD_PX;
 
-  // QUARRIES
-  g.fillStyle = GLASS.quarry;
-  g.fillRect(b, b, W - 2 * b, H - 2 * b);
+  const fillStroke = (fill: string) => glass(g, fill);
+
   g.save();
   g.beginPath();
   g.rect(b, b, W - 2 * b, H - 2 * b);
   g.clip();
-  g.strokeStyle = LEAD;
-  g.lineWidth = LEAD_PX * 0.8;
+  g.fillStyle = GLASS.ground;
+  g.fillRect(0, 0, W, H);
+
+  // RAYS
+  // deco sunburst above the horizon
+  const sunY = H * 0.3;
+  const sunR = W * 0.2;
+  g.save();
   g.beginPath();
-  for (let k = -H; k < W + H; k += QUARRY_PX) {
-    g.moveTo(k, 0);
-    g.lineTo(k + H * 0.7, H);
-    g.moveTo(k, H);
-    g.lineTo(k + H * 0.7, 0);
+  g.rect(0, 0, W, horizon);
+  g.clip();
+  const step = (Math.PI * 2) / RAYS;
+  for (let i = 0; i < RAYS; i++) {
+    const a0 = i * step - Math.PI / 2;
+    g.beginPath();
+    g.moveTo(cx, sunY);
+    g.arc(cx, sunY, H * 1.2, a0, a0 + step);
+    g.closePath();
+    fillStroke(i % 2 ? GLASS.rayA : GLASS.rayB);
   }
-  g.stroke();
   g.restore();
 
-  // BORDER
-  // ruby lengths broken by cobalt blocks, amber squares in the corners
-  const run = (x: number, y: number, len: number, along: "x" | "y") => {
-    const n = Math.max(3, Math.round(len / 150));
-    const step = len / n;
-    for (let i = 0; i < n; i++) {
-      const s = i * step;
-      g.fillStyle = i % 2 ? GLASS.cobalt : GLASS.ruby;
-      if (along === "x") g.fillRect(x + s, y, step, b);
-      else g.fillRect(x, y + s, b, step);
-      g.strokeStyle = LEAD;
-      g.lineWidth = LEAD_PX;
-      if (along === "x") g.strokeRect(x + s, y, step, b);
-      else g.strokeRect(x, y + s, b, step);
-    }
-  };
-  run(b, 0, W - 2 * b, "x");
-  run(b, H - b, W - 2 * b, "x");
-  run(0, b, H - 2 * b, "y");
-  run(W - b, b, H - 2 * b, "y");
+  // SUN
+  // concentric rings, af klint's disc
+  const rings = [GLASS.lavender, GLASS.rose, GLASS.saffron, GLASS.cream, GLASS.coral];
+  for (let i = 0; i < rings.length; i++) {
+    g.beginPath();
+    g.arc(cx, sunY, sunR * (1 - i / rings.length), 0, Math.PI * 2);
+    fillStroke(rings[i]);
+  }
+  // a split through the inner rings, light and dark halves
+  g.beginPath();
+  g.moveTo(cx, sunY - sunR * 0.6);
+  g.lineTo(cx, sunY + sunR * 0.6);
+  g.stroke();
+
+  // ARCHES
+  // nested half circles rising from the sill
+  const archY = H - b;
+  const archFills = [GLASS.sky, GLASS.sage, GLASS.mist, GLASS.cream];
+  for (let i = ARCHES - 1; i >= 0; i--) {
+    const r = W * 0.12 + i * ((horizon - b) / ARCHES) * 1.35;
+    g.beginPath();
+    g.rect(b, horizon, W - 2 * b, H);
+    g.save();
+    g.clip();
+    g.beginPath();
+    g.arc(cx, archY, r, Math.PI, Math.PI * 2);
+    g.closePath();
+    fillStroke(archFills[i % archFills.length]);
+    g.restore();
+  }
+  g.beginPath();
+  g.moveTo(0, horizon);
+  g.lineTo(W, horizon);
+  g.stroke();
+
+  // LEAVES
+  // tall vs from the sill, mirrored
+  const baseY = H - b;
+  const lotusY = H * 0.74;
+  for (const s of [-1, 1]) {
+    leaf(g, cx + s * 20, baseY, cx + s * W * 0.3, lotusY - H * 0.06, 34, GLASS.leaf);
+    leaf(g, cx + s * 10, baseY, cx + s * W * 0.16, lotusY + H * 0.02, 26, GLASS.leafHi);
+  }
+
+  // SPIRALS
+  for (const s of [-1, 1]) spiral(g, cx + s * W * 0.25, lotusY + H * 0.05, s, GLASS.leaf);
+
+  // LOTUS
+  // a fan of petals, outer then inner, a gold seed at the base
+  fan(g, cx, lotusY, W * 0.26, 7, [GLASS.saffron, GLASS.coral, GLASS.rose]);
+  fan(g, cx, lotusY, W * 0.15, 5, [GLASS.rose, GLASS.lavender]);
+  g.beginPath();
+  g.arc(cx, lotusY, W * 0.045, 0, Math.PI * 2);
+  fillStroke(GLASS.gold);
+  g.restore();
+
+  // FRAME
+  // saffron band cut into lengths, gold corner blocks with a rose eye
+  g.fillStyle = GLASS.frame;
+  g.beginPath();
+  g.rect(0, 0, W, H);
+  g.rect(b, b, W - 2 * b, H - 2 * b);
+  g.fill("evenodd");
+  g.beginPath();
+  for (let x = b + W * 0.2; x < W - b - 10; x += W * 0.2) {
+    g.moveTo(x, 0);
+    g.lineTo(x, b);
+    g.moveTo(x, H - b);
+    g.lineTo(x, H);
+  }
+  for (let y = b + H * 0.16; y < H - b - 10; y += H * 0.16) {
+    g.moveTo(0, y);
+    g.lineTo(b, y);
+    g.moveTo(W - b, y);
+    g.lineTo(W, y);
+  }
+  g.stroke();
   for (const [x, y] of [
     [0, 0],
     [W - b, 0],
     [0, H - b],
     [W - b, H - b],
   ]) {
-    g.fillStyle = GLASS.amber;
-    g.fillRect(x, y, b, b);
-    g.strokeRect(x, y, b, b);
-    g.fillStyle = GLASS.emerald;
     g.beginPath();
-    g.arc(x + b / 2, y + b / 2, b * 0.24, 0, Math.PI * 2);
-    g.fill();
-    g.stroke();
-  }
-
-  // ROSE
-  // clear the quarries under it, then ring, petals, eye
-  g.save();
-  g.globalCompositeOperation = "destination-out";
-  g.beginPath();
-  g.arc(cx, cy, R, 0, Math.PI * 2);
-  g.fill();
-  g.restore();
-
-  const sector = (r0: number, r1: number, a0: number, a1: number, fill: string) => {
+    g.rect(x, y, b, b);
+    fillStroke(GLASS.gold);
     g.beginPath();
-    g.arc(cx, cy, r1, a0, a1);
-    g.arc(cx, cy, r0, a1, a0, true);
-    g.closePath();
-    g.fillStyle = fill;
-    g.fill();
-    g.stroke();
-  };
-  g.strokeStyle = LEAD;
-  g.lineWidth = LEAD_PX;
-  const seg = (Math.PI * 2) / PETALS;
-  for (let i = 0; i < PETALS * 2; i++) {
-    const a = (i * seg) / 2 - Math.PI / 2;
-    sector(R * 0.82, R, a, a + seg / 2, i % 2 ? GLASS.emerald : GLASS.amber);
+    g.arc(x + b / 2, y + b / 2, b * 0.22, 0, Math.PI * 2);
+    fillStroke(GLASS.rose);
   }
-  for (let i = 0; i < PETALS; i++) {
-    const a = i * seg - Math.PI / 2;
-    // each petal is a pointed arch, leaded inside the ring
-    g.beginPath();
-    g.moveTo(cx + Math.cos(a) * R * 0.3, cy + Math.sin(a) * R * 0.3);
-    g.quadraticCurveTo(
-      cx + Math.cos(a - seg * 0.5) * R * 0.9,
-      cy + Math.sin(a - seg * 0.5) * R * 0.9,
-      cx + Math.cos(a) * R * 0.8,
-      cy + Math.sin(a) * R * 0.8,
-    );
-    g.quadraticCurveTo(
-      cx + Math.cos(a + seg * 0.5) * R * 0.9,
-      cy + Math.sin(a + seg * 0.5) * R * 0.9,
-      cx + Math.cos(a) * R * 0.3,
-      cy + Math.sin(a) * R * 0.3,
-    );
-    g.fillStyle = i % 2 ? GLASS.cobalt : GLASS.ruby;
-    g.fill();
-    g.stroke();
-  }
-  // gaps between petals
-  g.save();
-  g.globalCompositeOperation = "destination-over";
-  g.fillStyle = GLASS.violet;
-  g.beginPath();
-  g.arc(cx, cy, R * 0.82, 0, Math.PI * 2);
-  g.fill();
-  g.restore();
-  sector(0, R * 0.3, 0, Math.PI * 2, GLASS.amber);
-  sector(0, R * 0.12, 0, Math.PI * 2, GLASS.ruby);
-  g.beginPath();
-  g.arc(cx, cy, R * 0.82, 0, Math.PI * 2);
-  g.stroke();
-
-  // FRAME
+  g.strokeRect(b, b, W - 2 * b, H - 2 * b);
   g.lineWidth = FRAME_PX;
   g.strokeRect(FRAME_PX / 2, FRAME_PX / 2, W - FRAME_PX, H - FRAME_PX);
-  g.lineWidth = LEAD_PX;
-  g.strokeRect(b, b, W - 2 * b, H - 2 * b);
+}
+
+// GLASS
+// a piece replaces whatever lies under it, so layers never show through each other
+function glass(g: CanvasRenderingContext2D, fill: string) {
+  g.save();
+  g.globalCompositeOperation = "destination-out";
+  g.fillStyle = "#000";
+  g.fill();
+  g.restore();
+  g.fillStyle = fill;
+  g.fill();
+  g.stroke();
+}
+
+// a long blade from base to tip, bowing outward
+function leaf(
+  g: CanvasRenderingContext2D,
+  ax: number,
+  ay: number,
+  tx: number,
+  ty: number,
+  wid: number,
+  fill: string,
+) {
+  const mx = (ax + tx) / 2;
+  const my = (ay + ty) / 2;
+  const bow = (tx - ax) * 0.25;
+  g.beginPath();
+  g.moveTo(ax - wid / 2, ay);
+  g.quadraticCurveTo(mx - wid + bow, my, tx, ty);
+  g.quadraticCurveTo(mx + wid + bow, my + wid, ax + wid / 2, ay);
+  g.closePath();
+  glass(g, fill);
+}
+
+// fan of rounded petals opening upward from a point
+function fan(
+  g: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  r: number,
+  n: number,
+  fills: string[],
+) {
+  const from = Math.PI * 1.08;
+  const span = Math.PI * 0.84;
+  const each = span / n;
+  for (let i = 0; i < n; i++) {
+    const a0 = from + i * each;
+    const a1 = a0 + each;
+    const am = (a0 + a1) / 2;
+    g.beginPath();
+    g.moveTo(x, y);
+    g.lineTo(x + Math.cos(a0) * r * 0.86, y + Math.sin(a0) * r * 0.86);
+    g.quadraticCurveTo(
+      x + Math.cos(am) * r * 1.18,
+      y + Math.sin(am) * r * 1.18,
+      x + Math.cos(a1) * r * 0.86,
+      y + Math.sin(a1) * r * 0.86,
+    );
+    g.closePath();
+    glass(g, fills[i % fills.length]);
+  }
+}
+
+// SPIRAL
+// af klint's snail: a band winding out from the centre, s mirrors it
+function spiral(g: CanvasRenderingContext2D, x: number, y: number, s: number, fill: string) {
+  const steps = 90;
+  const end = Math.PI * 2 * SPIRAL_TURNS;
+  const grow = 9;
+  const band = 15;
+  const at = (t: number, off: number) => {
+    const r = Math.max(0, 6 + grow * t - off);
+    const a = -Math.PI / 2 + s * t;
+    return [x + Math.cos(a) * r, y + Math.sin(a) * r];
+  };
+  g.beginPath();
+  for (let i = 0; i <= steps; i++) {
+    const [px, py] = at((end * i) / steps, 0);
+    if (i) g.lineTo(px, py);
+    else g.moveTo(px, py);
+  }
+  for (let i = steps; i >= 0; i--) {
+    const [px, py] = at((end * i) / steps, band);
+    g.lineTo(px, py);
+  }
+  g.closePath();
+  glass(g, fill);
 }
