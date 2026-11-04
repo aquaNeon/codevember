@@ -8,11 +8,12 @@ import { edgeTable, triTable } from "three/examples/jsm/objects/MarchingCubes.js
 export const BLOB = {
   radius: 0.3, // kernel reach in world units
   iso: 0.42, // threshold, higher pulls the skin in
-  blur: 2, // smoothing passes over the density, hides the individual blobs
-  bridge: 0.36, // links longer than this are stretched and get filler blobs
-  fill: 0.18, // spacing of the filler blobs
-  fillMax: 350, // filler budget per frame, caps the cost of a very stretched dough
-  cell: 0.06, // grid spacing, smaller is smoother and slower
+  blur: 3, // smoothing passes over the density, hides the individual blobs
+  bridge: 0.45, // links longer than this open a visible gap and get filler blobs
+  fill: 0.2, // spacing of the filler blobs
+  fillMax: 600, // filler budget per frame; only strands use it
+  strand: 5, // a particle with fewer short links than this is part of a strand
+  cell: 0.07, // grid spacing, smaller is smoother and slower
 };
 
 const SIZE = [6.6, 3.4, 6.6]; // grid extent, it follows the dough so nothing gets clipped
@@ -50,6 +51,7 @@ export class Blobs {
   // last touched box, so clearing stays local
   private box = new Int32Array([0, 0, 0, 0, 0, 0]);
   private span = new Int32Array(6);
+  private near = new Uint8Array(0); // short links per particle, sized on first update
   private min = new Float64Array(3); // world position of grid cell 0, snapped to whole cells
 
   constructor() {
@@ -107,17 +109,27 @@ export class Blobs {
     for (let i = 0; i < count; i++) this.splat(x[i * 3], x[i * 3 + 1], x[i * 3 + 2]);
 
     // BRIDGE
-    // every stretched link gets filled; when the budget is tight the fill gets sparser, never skipped
+    // fill only strands: long links where an end has few short neighbours, i.e. it is not inside the body.
+    // a real strand then always gets dense fill; the budget only thins it out in extreme cases
     if (la && lb) {
+      const { near } = this;
+      if (near.length < count) this.near = new Uint8Array(count);
+      const nb = this.near;
+      nb.fill(0, 0, count);
+      for (let k = 0; k < la.length; k++) {
+        if (this.linkLen(x, la[k], lb[k]) > BLOB.bridge) continue;
+        if (nb[la[k]] < 255) nb[la[k]]++;
+        if (nb[lb[k]] < 255) nb[lb[k]]++;
+      }
       let total = 0;
       for (let k = 0; k < la.length; k++) {
         const len = this.linkLen(x, la[k], lb[k]);
-        if (len > BLOB.bridge) total += len;
+        if (len > BLOB.bridge && (nb[la[k]] < BLOB.strand || nb[lb[k]] < BLOB.strand)) total += len;
       }
       const gap = Math.max(BLOB.fill, total / BLOB.fillMax);
       for (let k = 0; k < la.length; k++) {
         const len = this.linkLen(x, la[k], lb[k]);
-        if (len <= BLOB.bridge) continue;
+        if (len <= BLOB.bridge || (nb[la[k]] >= BLOB.strand && nb[lb[k]] >= BLOB.strand)) continue;
         const i = la[k] * 3,
           j = lb[k] * 3;
         const steps = Math.max(2, Math.ceil(len / gap));
@@ -408,6 +420,14 @@ export class Blobs {
     }
   }
 
+  // true when any point sits inside the skin (plus margin), so a sleeping towel knows to wake
+  touches(q: Float32Array, count: number, margin: number) {
+    const target = BLOB.iso * (1 - margin);
+    for (let p = 0; p < count * 3; p += 3)
+      if (this.sample(q[p], q[p + 1], q[p + 2]) > target) return true;
+    return false;
+  }
+
   // BLUR
   // separable 1-2-1 pass along each axis, only inside the touched box
   private smooth() {
@@ -418,10 +438,25 @@ export class Blobs {
     box[3] = Math.min(nx - 2, box[3] + 1);
     box[4] = Math.min(ny - 2, box[4] + 1);
     box[5] = Math.min(nz - 2, box[5] + 1);
+    // the passes read one cell past the box in tmp; clear that shell so old frames never leak in as slivers
+    this.clearTmp();
     this.pass(field, tmp, 1);
     this.pass(tmp, field, nx);
     this.pass(field, tmp, nx * ny);
     this.pass(tmp, field, 0);
+  }
+
+  private clearTmp() {
+    const { nx, ny, nz, tmp, box } = this;
+    const sxy = nx * ny;
+    const x0 = Math.max(0, box[0] - 1),
+      x1 = Math.min(nx - 1, box[3] + 1);
+    const y0 = Math.max(0, box[1] - 1),
+      y1 = Math.min(ny - 1, box[4] + 1);
+    const z0 = Math.max(0, box[2] - 1),
+      z1 = Math.min(nz - 1, box[5] + 1);
+    for (let k = z0; k <= z1; k++)
+      for (let j = y0; j <= y1; j++) tmp.fill(0, k * sxy + j * nx + x0, k * sxy + j * nx + x1 + 1);
   }
 
   // step 0 is a plain copy back

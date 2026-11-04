@@ -15,7 +15,7 @@ import {
   WebGLRenderer,
 } from "three";
 import { Cloth } from "./cloth";
-import { DoughSim, icosphere } from "./sim";
+import { DoughSim, GRIP, icosphere } from "./sim";
 import { Blobs } from "./blobs";
 
 const MAX_DPR = 2;
@@ -25,15 +25,12 @@ const MAX_STEPS = 2;
 const SHELL_LEVEL = 3;
 const FOV_DEG = 26;
 const CAM_PITCH_RAD = 0.44;
-const CAM_FIT = 3.9; // world width that must stay in frame
+const CAM_FIT = 4.5; // world width that must stay in frame
 const TARGET_Y = 0.25;
 const SETTLE_FRAMES = 30;
-const FOLD_LIFT = 0.35;
-const FOLD_TRAVEL = 0.45;
+const FOLD_LIFT = 0.25;
+const FOLD_TRAVEL = 0.3;
 const FOLDS_TO_REST = 4;
-const RISE = 1.12;
-const TAP_MS = 220;
-const TAP_PX = 6;
 const SHADOW_PX = 1024;
 const ROUGH = 0.72;
 const DROP_Y = 3.4; // fresh dough falls in from above the frame
@@ -41,7 +38,10 @@ const OFFSCREEN_S = 0.45;
 const EDGE_NDC = 1.0;
 const LOST_SHARE = 0.3; // share of the dough outside the frame that counts as thrown away
 const LOST_STRIDE = 6;
-const FOLD_REACH = 2.2; // a fold only counts when released over the dough, not flung away
+const FOLD_ASSIST = 1.3; // inward travel per unit of lift, carries the flap back over the body
+const FOLD_OVERSHOOT = 1.5; // how far past the grab-to-centre distance the flap may travel
+const THROW_SPAN = 2.2; // hand further out than this many grab-to-centre distances counts as a throw
+const FOLD_REACH = 2.6; // a fold only counts when released over the dough, not flung away
 const DOUGH_COLOR = "#ecdcbf";
 const CLOTH_DELAY_S = 1.1; // let the last fold slump before the towel lands
 
@@ -83,9 +83,6 @@ export class Dough {
 
   // GESTURE
   private pointer = -1;
-  private downX = 0;
-  private downY = 0;
-  private downT = 0;
   private hx = 0;
   private hy = 0;
   private hz = 0;
@@ -93,6 +90,11 @@ export class Dough {
   private maxTravel = 0;
   private tx = 0;
   private tz = 0;
+  // inward direction and reach for the fold assist, set on grab
+  private ux = 0;
+  private uz = 0;
+  private reach = 0;
+  private span = 1;
   private planeN = new Vector3();
   private planeD = 0;
 
@@ -257,15 +259,8 @@ export class Dough {
     const d = this.ray(e.clientX, e.clientY);
     const o = this.camera.position;
     if (!this.surface.pick(o.x, o.y, o.z, d.x, d.y, d.z)) return;
-    // four folds done: the dough is resting, a touch only pokes it, towel or not
-    if (this.folds >= FOLDS_TO_REST) {
-      const h = this.surface.hit;
-      this.camera.getWorldDirection(fwd);
-      this.sim.poke(h[0], h[1], h[2], fwd.x, fwd.y, fwd.z);
-      this.quiet = 0;
-      this.wake();
-      return;
-    }
+    // four folds done: the dough is resting, hands off until a new dough
+    if (this.folds >= FOLDS_TO_REST) return;
     const h = this.surface.hit;
     this.hx = h[0];
     this.hy = h[1];
@@ -273,11 +268,9 @@ export class Dough {
     this.pointer = e.pointerId;
     this.canvas.setPointerCapture(e.pointerId);
     this.canvas.style.cursor = "grabbing";
-    this.downX = e.clientX;
-    this.downY = e.clientY;
-    this.downT = performance.now();
     this.maxLift = 0;
     this.maxTravel = 0;
+    this.aim();
 
     // drag plane faces the camera, flattened so lifting reads as up
     this.camera.getWorldDirection(fwd);
@@ -302,9 +295,20 @@ export class Dough {
     const den = n.x * d.x + n.y * d.y + n.z * d.z;
     if (Math.abs(den) < 1e-5) return;
     const t = -(n.x * o.x + n.y * o.y + n.z * o.z + this.planeD) / den;
-    const tx = o.x + d.x * t;
+    let tx = o.x + d.x * t;
     const ty = o.y + d.y * t;
-    const tz = o.z + d.z * t;
+    let tz = o.z + d.z * t;
+    // FOLD ASSIST
+    // the screen only moves the hand up and sideways; the higher the flap has been, the further it travels over the body
+    const assist = Math.min(this.reach, Math.max(this.maxLift, ty - this.hy, 0) * FOLD_ASSIST);
+    tx += this.ux * assist;
+    tz += this.uz * assist;
+    // hand over the dough: the part on the bench holds like heavy dough; hand far out: let it come along
+    this.sim.centroid(this.mid);
+    const out = Math.hypot(tx - this.mid[0], tz - this.mid[2]);
+    const folding = out < this.span * THROW_SPAN;
+    this.sim.grip = folding ? GRIP.fold : GRIP.throw;
+    this.sim.pinned = folding;
     this.sim.drag(tx, ty, tz);
     this.tx = tx;
     this.tz = tz;
@@ -318,7 +322,7 @@ export class Dough {
     const d = this.ray(e.clientX, e.clientY);
     const o = this.camera.position;
     const over = this.surface.pick(o.x, o.y, o.z, d.x, d.y, d.z);
-    this.canvas.style.cursor = over ? (this.folds >= FOLDS_TO_REST ? "pointer" : "grab") : "";
+    this.canvas.style.cursor = over && this.folds < FOLDS_TO_REST ? "grab" : "";
   }
 
   private up = (e: PointerEvent) => {
@@ -326,14 +330,7 @@ export class Dough {
     this.pointer = -1;
     this.canvas.style.cursor = "grab";
     this.sim.release();
-    const tap =
-      performance.now() - this.downT < TAP_MS &&
-      Math.hypot(e.clientX - this.downX, e.clientY - this.downY) < TAP_PX;
-    if (tap) {
-      // squish toward where the camera looks
-      this.camera.getWorldDirection(fwd);
-      this.sim.poke(this.hx, this.hy, this.hz, fwd.x, fwd.y, fwd.z);
-    } else if (
+    if (
       this.maxLift > FOLD_LIFT &&
       this.maxTravel > FOLD_TRAVEL &&
       this.overDough() &&
@@ -343,7 +340,6 @@ export class Dough {
       this.material.roughness = ROUGH - (this.folds / FOLDS_TO_REST) * 0.22; // smoother with each fold
       const resting = this.folds === FOLDS_TO_REST;
       if (resting) {
-        this.sim.rise(RISE);
         this.clothIn = CLOTH_DELAY_S;
       }
       this.onState(this.folds, resting ? "rest" : "fold");
@@ -351,6 +347,25 @@ export class Dough {
     this.quiet = 0;
     this.wake();
   };
+
+  // inward = from the grab point toward the middle of the dough, flat on the bench
+  private aim() {
+    this.sim.centroid(this.mid);
+    const dx = this.mid[0] - this.hx;
+    const dz = this.mid[2] - this.hz;
+    const len = Math.hypot(dx, dz);
+    if (len < 0.3) {
+      this.ux = 0;
+      this.uz = 0;
+      this.reach = 0;
+      this.span = 0.6;
+      return;
+    }
+    this.ux = dx / len;
+    this.uz = dz / len;
+    this.reach = len * FOLD_OVERSHOOT;
+    this.span = len;
+  }
 
   private overDough() {
     this.sim.centroid(this.mid);
@@ -398,7 +413,8 @@ export class Dough {
     this.surface.update(this.sim.x, this.sim.n, this.sim.ca, this.sim.cb);
     this.track();
     this.renderer.render(this.scene, this.camera);
-    this.quiet = active ? 0 : this.quiet + 1;
+    // dormant: nothing changes until the first touch, so one frame is enough
+    this.quiet = this.dormant ? SETTLE_FRAMES : active ? 0 : this.quiet + 1;
     if (this.quiet < SETTLE_FRAMES) this.wake();
     else this.last = 0;
   };
