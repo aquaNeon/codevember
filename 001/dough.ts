@@ -229,7 +229,8 @@ export class Dough {
   reset() {
     this.dormant = false;
     this.sim.reset(DROP_Y);
-    this.cloth.hide();
+    // the towel gets whipped off while the fresh lump drops in
+    if (this.cloth.covering) this.cloth.lift();
     this.clothIn = 0;
     this.offscreen = 0;
     this.restart();
@@ -253,17 +254,18 @@ export class Dough {
 
   private down = (e: PointerEvent) => {
     if (this.pointer !== -1) return;
-    // first touch on a covered dough whips the towel off and starts a new round
-    if (this.cloth.covering) {
-      if (!this.cloth.lifting) {
-        this.cloth.lift();
-        this.restart();
-      }
-      return;
-    }
     const d = this.ray(e.clientX, e.clientY);
     const o = this.camera.position;
     if (!this.surface.pick(o.x, o.y, o.z, d.x, d.y, d.z)) return;
+    // four folds done: the dough is resting, a touch only pokes it, towel or not
+    if (this.folds >= FOLDS_TO_REST) {
+      const h = this.surface.hit;
+      this.camera.getWorldDirection(fwd);
+      this.sim.poke(h[0], h[1], h[2], fwd.x, fwd.y, fwd.z);
+      this.quiet = 0;
+      this.wake();
+      return;
+    }
     const h = this.surface.hit;
     this.hx = h[0];
     this.hy = h[1];
@@ -315,7 +317,8 @@ export class Dough {
   private hover(e: PointerEvent) {
     const d = this.ray(e.clientX, e.clientY);
     const o = this.camera.position;
-    this.canvas.style.cursor = this.surface.pick(o.x, o.y, o.z, d.x, d.y, d.z) ? "grab" : "";
+    const over = this.surface.pick(o.x, o.y, o.z, d.x, d.y, d.z);
+    this.canvas.style.cursor = over ? (this.folds >= FOLDS_TO_REST ? "pointer" : "grab") : "";
   }
 
   private up = (e: PointerEvent) => {
