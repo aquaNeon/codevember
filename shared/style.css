@@ -1,0 +1,205 @@
+@import "@fontsource/instrument-serif/latin-400.css";
+@import "@fontsource/instrument-serif/latin-400-italic.css";
+
+:root {
+  --bone: #ebe5da;
+  --bone-hi: #f5f1ea;
+  --ink: #1c1a17;
+  --muted: #6b645a;
+  --rule: rgb(28 26 23 / 0.16);
+  --accent: #1c1a17;
+  --serif: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --gutter: clamp(16px, 3vw, 36px);
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  background: radial-gradient(120% 90% at 50% 38%, var(--bone-hi), var(--bone) 70%) fixed;
+  color: var(--ink);
+  font: 400 15px/1.45 var(--serif);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* GRAIN */
+/* static svg noise, multiplied over everything */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+  opacity: 0.35;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .1 0 0 0 0 .09 0 0 0 0 .08 0 0 0 .55 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+a {
+  color: inherit;
+}
+
+.mono {
+  font: 500 11px/1.4 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* TOP BAR */
+.cv-top {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 16px;
+  padding: 14px var(--gutter);
+  border-bottom: 1px solid var(--rule);
+}
+
+.cv-top a {
+  text-decoration: none;
+}
+
+.cv-top a:hover,
+.cv-top a:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.cv-top nav {
+  justify-self: end;
+  display: flex;
+  gap: 18px;
+}
+
+.cv-top [aria-disabled] {
+  color: var(--muted);
+  opacity: 0.5;
+}
+
+/* TITLE BLOCK */
+.cv-title {
+  position: fixed;
+  left: var(--gutter);
+  bottom: var(--gutter);
+  z-index: 5;
+  max-width: min(30rem, calc(100vw - 2 * var(--gutter)));
+  pointer-events: none;
+}
+
+.cv-title .mono {
+  display: flex;
+  gap: 12px;
+  color: var(--muted);
+}
+
+.cv-title .mono::before {
+  content: "";
+  width: 28px;
+  height: 1px;
+  margin-top: 0.7em;
+  background: currentColor;
+}
+
+.cv-title h1 {
+  margin: 4px 0 6px -0.04em;
+  font: 400 clamp(84px, 15vw, 200px) / 0.82 var(--serif);
+  letter-spacing: -0.035em;
+}
+
+.cv-title h1 em {
+  color: var(--accent);
+}
+
+.cv-title p {
+  margin: 0;
+  font-size: clamp(16px, 1.6vw, 19px);
+  line-height: 1.35;
+  max-width: 26ch;
+}
+
+/* HUD */
+.cv-hud {
+  position: fixed;
+  right: var(--gutter);
+  bottom: var(--gutter);
+  z-index: 5;
+  display: grid;
+  justify-items: end;
+  gap: 14px;
+  text-align: right;
+}
+
+.cv-hud dl {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 4px 18px;
+  margin: 0;
+}
+
+.cv-hud dt {
+  color: var(--muted);
+}
+
+.cv-hud dd {
+  margin: 0;
+}
+
+.cv-btn {
+  font: 500 11px/1 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink);
+  background: none;
+  border: 1px solid var(--ink);
+  border-radius: 999px;
+  padding: 0 16px;
+  min-height: 36px;
+  cursor: pointer;
+}
+
+.cv-btn:hover,
+.cv-btn:focus-visible {
+  background: var(--ink);
+  color: var(--bone-hi);
+}
+
+.cv-figure {
+  position: fixed;
+  inset: 0;
+}
+
+.cv-figure canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+@media (max-width: 640px) {
+  .cv-top {
+    grid-template-columns: 1fr auto;
+  }
+  .cv-top > span {
+    display: none;
+  }
+  .cv-title {
+    bottom: auto;
+    top: 64px;
+  }
+  .cv-title p {
+    display: none;
+  }
+}

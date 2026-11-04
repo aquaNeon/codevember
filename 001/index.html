@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fold · Codevember 001</title>
+    <meta
+      name="description"
+      content="A lump of soft dough you stretch and fold over itself. Codevember day 1."
+    />
+    <link rel="icon" href="../favicon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#ebe5da" />
+    <style>
+      :root {
+        --accent: #a86a32;
+      }
+      .cv-figure canvas {
+        touch-action: none;
+      }
+      .fig {
+        position: fixed;
+        top: 64px;
+        right: var(--gutter);
+        color: var(--muted);
+        text-align: right;
+      }
+      .still,
+      .live-only {
+        visibility: hidden;
+      }
+      [data-cv-live] .live-only {
+        visibility: visible;
+      }
+      [data-cv-still] .cv-figure canvas {
+        display: none;
+      }
+      [data-cv-still] .still {
+        visibility: visible;
+        position: absolute;
+        left: 50%;
+        top: 52%;
+        width: min(46vw, 360px);
+        aspect-ratio: 1.7;
+        translate: -50% -50%;
+        border-radius: 48% 52% 44% 46% / 62% 58% 40% 38%;
+        background: radial-gradient(70% 60% at 40% 30%, #f2e0bd, #e4cba0 60%, #c9a974);
+        box-shadow: 0 30px 40px -24px rgb(40 28 16 / 0.45);
+      }
+      @media (max-width: 640px) {
+        .fig {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="cv-top mono">
+      <a href="../">Codevember ’26</a>
+      <span>Day 001 of 030</span>
+      <nav data-cv-nav aria-label="Days"></nav>
+    </header>
+
+    <main data-cv>
+      <div class="cv-figure">
+        <canvas
+          data-cv-canvas
+          aria-label="A lump of dough on a bench. Drag an edge up and over to fold it, tap to squish."
+        ></canvas>
+        <div class="still" role="img" aria-label="A lump of dough"></div>
+      </div>
+
+      <p class="fig mono">Fig. 1<br />Dough, 400 g</p>
+
+      <section class="cv-title">
+        <span class="mono">No. 001</span>
+        <h1>Fold<em>.</em></h1>
+        <p>
+          <em>Stretch, fold, repeat.</em> Grab the dough by an edge, pull it up and lay it over
+          itself. Four folds, then let it rest.
+        </p>
+      </section>
+
+      <aside class="cv-hud mono live-only" aria-live="polite">
+        <dl>
+          <dt>Folds</dt>
+          <dd data-cv-folds>0 / 4</dd>
+        </dl>
+        <span data-cv-hint>Lift an edge, fold it over</span>
+        <button type="button" class="cv-btn" data-cv-reset>New dough</button>
+      </aside>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
