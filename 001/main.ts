@@ -5,7 +5,7 @@ const DAY = 1;
 const HINT = {
   fold: "Lift an edge, fold it over",
   rest: "Rest. Let it rise",
-  covered: "Tap to uncover",
+  covered: "Resting. Poke it, or start a new dough",
 } as const;
 
 const root = document.querySelector<HTMLElement>("[data-cv]");

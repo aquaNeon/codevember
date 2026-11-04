@@ -74,6 +74,8 @@ export class Dough {
   private visible = false;
   private sized = false;
   private ready = false;
+  // the first frames only draw the spawn shape; physics wakes on the first touch, so load stays cheap
+  private dormant = true;
   private quiet = 0;
   private reducedMotion: boolean;
   private cleanups: (() => void)[] = [];
@@ -171,7 +173,11 @@ export class Dough {
     const shell = icosphere(SHELL_LEVEL);
     this.sim = new DoughSim(shell);
     if (this.reducedMotion) this.sim.damp = 6;
-    this.material = new MeshStandardMaterial({ color: DOUGH_COLOR, roughness: ROUGH });
+    this.material = new MeshStandardMaterial({
+      color: DOUGH_COLOR,
+      roughness: ROUGH,
+      vertexColors: true,
+    });
     this.blob = new Mesh(this.surface.geometry, this.material);
     this.blob.castShadow = true;
     this.blob.receiveShadow = true;
@@ -221,8 +227,10 @@ export class Dough {
 
   // PUBLIC
   reset() {
+    this.dormant = false;
     this.sim.reset(DROP_Y);
-    this.cloth.hide();
+    // the towel gets whipped off while the fresh lump drops in
+    if (this.cloth.covering) this.cloth.lift();
     this.clothIn = 0;
     this.offscreen = 0;
     this.restart();
@@ -246,17 +254,18 @@ export class Dough {
 
   private down = (e: PointerEvent) => {
     if (this.pointer !== -1) return;
-    // first touch on a covered dough whips the towel off and starts a new round
-    if (this.cloth.covering) {
-      if (!this.cloth.lifting) {
-        this.cloth.lift();
-        this.restart();
-      }
-      return;
-    }
     const d = this.ray(e.clientX, e.clientY);
     const o = this.camera.position;
     if (!this.surface.pick(o.x, o.y, o.z, d.x, d.y, d.z)) return;
+    // four folds done: the dough is resting, a touch only pokes it, towel or not
+    if (this.folds >= FOLDS_TO_REST) {
+      const h = this.surface.hit;
+      this.camera.getWorldDirection(fwd);
+      this.sim.poke(h[0], h[1], h[2], fwd.x, fwd.y, fwd.z);
+      this.quiet = 0;
+      this.wake();
+      return;
+    }
     const h = this.surface.hit;
     this.hx = h[0];
     this.hy = h[1];
@@ -276,6 +285,7 @@ export class Dough {
     fwd.normalize();
     this.planeN.copy(fwd);
     this.planeD = -(fwd.x * this.hx + fwd.y * this.hy + fwd.z * this.hz);
+    this.dormant = false;
     this.sim.grab(this.hx, this.hy, this.hz);
     this.quiet = 0;
     this.wake();
@@ -307,7 +317,8 @@ export class Dough {
   private hover(e: PointerEvent) {
     const d = this.ray(e.clientX, e.clientY);
     const o = this.camera.position;
-    this.canvas.style.cursor = this.surface.pick(o.x, o.y, o.z, d.x, d.y, d.z) ? "grab" : "";
+    const over = this.surface.pick(o.x, o.y, o.z, d.x, d.y, d.z);
+    this.canvas.style.cursor = over ? (this.folds >= FOLDS_TO_REST ? "pointer" : "grab") : "";
   }
 
   private up = (e: PointerEvent) => {
@@ -360,18 +371,18 @@ export class Dough {
     if (!this.sized) this.resize();
 
     // fixed step keeps the sim identical at 60, 120 or throttled frame rates
-    this.acc += dt;
+    this.acc = this.dormant ? 0 : this.acc + dt;
     let active = false;
     let steps = 0;
-    while (this.acc >= STEP_S && steps < MAX_STEPS) {
+    while (!this.dormant && this.acc >= STEP_S && steps < MAX_STEPS) {
       const moving = this.sim.step(STEP_S);
       active = this.cloth.step(STEP_S, this.surface, moving) || moving || active;
       this.acc -= STEP_S;
       steps++;
     }
     if (steps === MAX_STEPS) this.acc = 0;
-    if (!steps) active = true;
-    if (this.lost(dt)) active = true;
+    if (!steps && !this.dormant) active = true;
+    if (!this.dormant && this.lost(dt)) active = true;
 
     // TOWEL
     if (this.clothIn > 0) {

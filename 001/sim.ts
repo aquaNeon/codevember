@@ -3,7 +3,7 @@
 // distance links that yield plastically, one volume constraint over the shell,
 // floor friction and particle self-collision so folded flaps land on top
 
-export const SHAPE = { rx: 1.25, ry: 0.32, rz: 1.05, drop: 0.08 };
+export const SHAPE = { rx: 1.4, ry: 0.26, rz: 1.18, drop: 0.03 }; // a slack round, folds read better than on a thick lump
 
 const SUBSTEPS = 8;
 const GRAVITY = -16;
@@ -26,18 +26,18 @@ const SKIP_COLLIDE = 0.4;
 const STICK = 0.6; // how hard the bench holds a touching particle down, per substep
 const FLOOR_FRICTION = 0.3; // sideways drag on the bench, per substep
 const BREAK = 0.06; // how far a stuck particle stretches before it lets go
-const GRAB_RADIUS = 0.55;
+const GRAB = { along: 0.85, deep: 0.38, tall: 0.6 }; // half sizes of the grabbed strip
 const GRAB_PULL = 0.45;
 const POKE_SPEED = 2.6;
 const POKE_RADIUS = 0.45;
 const SLEEP_SPEED = 0.06;
 const HASH_SIZE = 4096;
 const TENSION = 0.02; // surface tension per substep, irons out spikes and creases
-const SLUMP_TENSION = 0.035; // stronger while slumping, pulls thin strands back into the body
-const FUSE_TAU_S = 1.2; // folded layers melt into each other once things slow down
+const SLUMP_TENSION = 0.024; // stronger while slumping, pulls thin strands back into the body
+const FUSE_TAU_S = 4; // folded layers melt into each other once things slow down
 const FUSE_SPEED = 0.6;
-const SLUMP_S = 2.5; // after a release the dough flows a little and sinks into itself
-const SLUMP_TAU_S = 0.9;
+const SLUMP_S = 1.2; // after a release the dough flows a little and sinks into itself
+const SLUMP_TAU_S = 2.5;
 const RISE_TAU_S = 0.7;
 const COLLIDE_EVERY = 1; // less often is cheaper but layers jitter
 
@@ -573,17 +573,41 @@ export class DoughSim {
   }
 
   // INPUT
+  // grabs a strip of the rim like a hand would: wide along the edge, shallow toward the middle
   grab(hx: number, hy: number, hz: number) {
     const { x, n } = this;
+    let cx = 0,
+      cz = 0;
+    for (let i = 0; i < n * 3; i += 3) {
+      cx += x[i];
+      cz += x[i + 2];
+    }
+    cx /= n;
+    cz /= n;
+    let ux = hx - cx,
+      uz = hz - cz;
+    const ul = Math.hypot(ux, uz);
+    // grabbed near the middle, fall back to a round patch
+    const strip = ul > 0.3;
+    if (strip) {
+      ux /= ul;
+      uz /= ul;
+    }
+    const { along, deep, tall } = GRAB;
     let g = 0;
     for (let i = 0; i < n; i++) {
       const o = i * 3;
       const dx = x[o] - hx,
         dy = x[o + 1] - hy,
         dz = x[o + 2] - hz;
-      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      if (d > GRAB_RADIUS) continue;
-      const f = 1 - (d / GRAB_RADIUS) ** 2;
+      let e: number;
+      if (strip) {
+        const inward = dx * ux + dz * uz;
+        const side = dx * -uz + dz * ux;
+        e = (side / along) ** 2 + (inward / deep) ** 2 + (dy / tall) ** 2;
+      } else e = (dx * dx + dy * dy + dz * dz) / (deep * deep * 2);
+      if (e >= 1) continue;
+      const f = 1 - e;
       this.grabIdx[g] = i;
       this.grabW[g] = f * f;
       this.grabOff[g * 3] = dx;
