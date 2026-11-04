@@ -1,8 +1,10 @@
 import "../shared/style.css";
 import { mountNav } from "../shared/nav";
+import { art } from "./art";
 import type { Phase } from "./pane";
 
 const DAY = 2;
+const IDLE_MS = 1200; // longest wait before the scene starts anyway
 const HINT: Record<Phase, string> = {
   whole: "Pull the sling back, let go",
   aiming: "Let go to shoot",
@@ -23,12 +25,20 @@ if (root && !root.hasAttribute("data-cv-mounted")) {
   const hint = root.querySelector<HTMLElement>("[data-cv-hint]");
   const rewind = root.querySelector<HTMLButtonElement>("[data-cv-rewind]");
   const scrub = root.querySelector<HTMLInputElement>("[data-cv-scrub]");
-  const still = () => root.setAttribute("data-cv-still", "");
+  // STILL
+  // the window itself, drawn flat; no three needed
+  const still = () => {
+    if (root.hasAttribute("data-cv-still")) return;
+    root.setAttribute("data-cv-still", "");
+    const frame = root.querySelector<HTMLElement>(".still");
+    if (frame) frame.append(art());
+  };
 
   if (!canvas || new URLSearchParams(location.search).has("still")) still();
   else {
-    // three is the heavy part, load it after first paint
-    import("./pane")
+    // three is the heavy part; wait for load and an idle moment, so a cold gpu
+    // process has finished starting before the first webgl call blocks on it
+    afterLoad(() => import("./pane"))
       .then(({ Pane }) => {
         const pane = new Pane(canvas);
         if (import.meta.env.DEV && location.search.includes("debug"))
@@ -64,4 +74,15 @@ if (root && !root.hasAttribute("data-cv-mounted")) {
       })
       .catch(still);
   }
+}
+
+function afterLoad<T>(fn: () => Promise<T>) {
+  return new Promise<void>((done) => {
+    const idle = () =>
+      "requestIdleCallback" in window
+        ? requestIdleCallback(() => done(), { timeout: IDLE_MS })
+        : setTimeout(done, 200);
+    if (document.readyState === "complete") idle();
+    else addEventListener("load", idle, { once: true });
+  }).then(fn);
 }

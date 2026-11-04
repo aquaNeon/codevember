@@ -26,6 +26,7 @@ import {
 import { fracture, prism } from "./fracture";
 import { Burst, DURATION_S, simulate } from "./burst";
 import { Sling } from "./sling";
+import { PANE_H, PANE_W } from "./art";
 import { paint } from "./paint";
 
 const MAX_DPR = 2;
@@ -34,8 +35,6 @@ const FOV_DEG = 30;
 const CAM_PITCH_RAD = 0.22;
 const CAM_FIT = 4.4; // world width that must stay in frame
 const TARGET_Y = 0.95;
-const PANE_W = 1.6;
-const PANE_H = 2.1; // portrait, like a window
 const PANE_T = 0.02;
 const PANE_Y = 1.38;
 const WALL_Z = -40; // no wall, pieces fly free
@@ -92,6 +91,7 @@ export class Pane {
   private visible = false;
   private sized = false;
   private ready = false;
+  private dead = false;
   private reducedMotion: boolean;
   private cleanups: (() => void)[] = [];
   private rect = { left: 0, top: 0, width: 1, height: 1 };
@@ -129,6 +129,15 @@ export class Pane {
       alpha: true,
       powerPreference: "high-performance",
     });
+    // SOFTWARE GL
+    // cpu renderers get the still before any shader compiles; ?gl forces the live path
+    if (!new URLSearchParams(location.search).has("gl") && software(r.getContext())) {
+      mq.removeEventListener("change", onMotion);
+      r.dispose();
+      r.forceContextLoss();
+      throw new Error("software gl");
+    }
+    r.debug.checkShaderErrors = import.meta.env.DEV; // reading every shader log stalls the first frame
     r.setClearColor(0x000000, 0);
     r.toneMapping = NeutralToneMapping;
     r.shadowMap.enabled = true;
@@ -136,8 +145,6 @@ export class Pane {
     this.renderer = r;
 
     // LIGHT
-    const env = studio(r);
-    this.scene.environment = env;
     const key = new DirectionalLight(0xfff4e6, 2.2);
     key.position.set(-2.6, 6, 4.4);
     key.castShadow = true;
@@ -164,7 +171,7 @@ export class Pane {
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     this.scene.add(floor);
-    this.disposables.push(floorGeo, floorMat, env);
+    this.disposables.push(floorGeo, floorMat);
 
     // GLASS
     // tinted clear glass with paint on it; paint mixes over the tint and is opaque
@@ -244,12 +251,7 @@ export class Pane {
     this.scene.add(this.reticle);
     this.disposables.push(ringGeo, ringMat);
 
-    r.compileAsync(this.scene, this.camera)
-      .catch(() => {})
-      .then(() => {
-        this.ready = true;
-        this.wake();
-      });
+    void this.boot();
 
     // OBSERVERS
     const ro = new ResizeObserver(() => this.queueResize());
@@ -283,6 +285,23 @@ export class Pane {
       () => canvas.removeEventListener("pointercancel", this.up),
       () => canvas.removeEventListener("keydown", this.key),
     );
+  }
+
+  // BOOT
+  // gpu setup in separate tasks so none blocks input for long:
+  // bake the room light, then compile in the background, then draw
+  private async boot() {
+    await nextTask();
+    if (this.dead) return;
+    const env = studio(this.renderer);
+    this.scene.environment = env;
+    this.disposables.push(env);
+    await nextTask();
+    if (this.dead) return;
+    await this.renderer.compileAsync(this.scene, this.camera).catch(() => {});
+    if (this.dead) return;
+    this.ready = true;
+    this.wake();
   }
 
   // PUBLIC
@@ -578,6 +597,7 @@ export class Pane {
   }
 
   dispose() {
+    this.dead = true;
     cancelAnimationFrame(this.raf);
     this.raf = 0;
     this.cleanups.forEach((fn) => fn());
@@ -586,7 +606,7 @@ export class Pane {
     this.disposables.forEach((d) => d.dispose());
     this.disposables.length = 0;
     this.renderer.dispose();
-    this.renderer.forceContextLoss();
+    if (!this.renderer.getContext().isContextLost()) this.renderer.forceContextLoss();
   }
 }
 
@@ -685,6 +705,14 @@ function glassLight(map: Texture, dir: Vector3) {
   return m;
 }
 
+const nextTask = () => new Promise<void>((done) => setTimeout(done, 0));
+
+function software(gl: WebGLRenderingContext | WebGL2RenderingContext) {
+  const info = gl.getExtension("WEBGL_debug_renderer_info");
+  const name = info ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : "";
+  return /swiftshader|llvmpipe|software|basic render/i.test(name);
+}
+
 // STUDIO
 // a dim room with softboxes, baked once into a prefiltered env map
 function studio(renderer: WebGLRenderer) {
@@ -708,7 +736,7 @@ function studio(renderer: WebGLRenderer) {
     box(0.7, 8, 0.8, -0.5, 7, 5), // the streak that reads as glass
   ];
   const pmrem = new PMREMGenerator(renderer);
-  const env = pmrem.fromScene(room, 0.02).texture;
+  const env = pmrem.fromScene(room).texture; // no blur pass, one less shader to compile
   pmrem.dispose();
   geo.dispose();
   mats.forEach((m) => m.dispose());
