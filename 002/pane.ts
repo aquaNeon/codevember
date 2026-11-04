@@ -43,6 +43,8 @@ const REST = new Vector3(0, 1.08, 3.6); // empty pouch, between camera and glass
 const MAX_PULL_M = 0.42;
 const MIN_PULL_M = 0.05;
 const PULL_BACK = 0.8; // pouch comes toward you as you draw
+const FORK_LOW_M = 0.05; // how far below rest the pouch can drop before it must clear the fork
+const FORK_CLEAR_M = 0.13; // pouch distance in front of the fork once it is low
 const AIM_GAIN = 2.6;
 const AIM_MARGIN_M = 0.08;
 const TAP_MS = 260;
@@ -433,7 +435,13 @@ export class Pane {
     }
     const pull = Math.min(len, MAX_PULL_M);
     this.power = pull / MAX_PULL_M;
-    this.pouch.set(REST.x + px, REST.y + py, REST.z + pull * PULL_BACK);
+    // pulled low, the pouch keeps in front of the fork instead of sinking into the wood
+    const low = Math.min(1, Math.max(0, (-py - FORK_LOW_M) / FORK_LOW_M));
+    this.pouch.set(
+      REST.x + px,
+      REST.y + py,
+      REST.z + Math.max(pull * PULL_BACK, low * FORK_CLEAR_M),
+    );
     const lx = PANE_W / 2 - AIM_MARGIN_M;
     const ly = PANE_H / 2 - AIM_MARGIN_M;
     this.aimX = Math.min(Math.max(-px * AIM_GAIN, -lx), lx);

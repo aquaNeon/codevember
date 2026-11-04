@@ -1,8 +1,10 @@
 import {
+  BufferGeometry,
   CanvasTexture,
   CatmullRomCurve3,
   CylinderGeometry,
   DoubleSide,
+  Float32BufferAttribute,
   Group,
   LatheGeometry,
   Mesh,
@@ -32,9 +34,12 @@ const WRAP_M = 0.04;
 const BAND_R = 0.0075;
 const BAND_SEGS = 10;
 const BAND_SLACK = 1.12; // natural band length over the stretch of the hanging pouch
-const POUCH_GAP = 1.12; // pouch radius over ball radius
-const POUCH_TALL = 1.3; // pouch height as an angle around the ball, radians
-const POUCH_HOLE = 0.5; // half the window in the pouch, radians
+const POUCH_GAP = 1.1; // inside of the leather over ball radius, clear of the steel
+const POUCH_THICK = 0.14; // leather thickness over ball radius
+const CUP_RIM = 1.45; // leather rim, angle down from the top of the ball; just above the middle
+const CUP_BASE = 2.9; // how far under the ball the leather reaches
+const CUP_WRAP = 0.4; // leather wraps this far past each side, radians
+const TIE_M = 0.018; // twine tying each band to the pouch
 const HANG = new Vector3(0, -0.13, 0.03); // where the empty pouch comes to rest, from REST
 const SWING_HZ = 2.4; // band recoil after the shot
 const SWING_DAMP = 4.5;
@@ -60,7 +65,8 @@ export class Sling {
   private blob: Mesh;
   private blobMat: MeshBasicMaterial;
   private pouch: Mesh[] = [];
-  private hole: Mesh;
+  private ties: Mesh[] = [];
+  private attach = [new Vector3(), new Vector3()];
   private pouchR: number;
   private anchors: Vector3[] = [];
   private bands: Mesh[][] = [[], []];
@@ -82,7 +88,7 @@ export class Sling {
     const latex = new MeshStandardMaterial({ color: 0xc98a3a, roughness: 0.38 });
     const leather = new MeshStandardMaterial({
       color: 0x24211e,
-      roughness: 0.7,
+      roughness: 0.75,
       side: DoubleSide,
     });
     const steel = new MeshStandardMaterial({ color: 0xdadada, metalness: 1, roughness: 0.2 });
@@ -162,22 +168,33 @@ export class Sling {
     }
 
     // POUCH
-    // two leather cups hug the ball's sides, the hole between them leaves the steel in view;
-    // once the ball is gone a middle piece closes it and the leather folds flat
-    this.pouchR = ballR * POUCH_GAP;
-    const band = POUCH_TALL / 2;
-    const cup = (from: number, len: number) => {
-      const geo = new SphereGeometry(this.pouchR, 12, 8, from, len, Math.PI / 2 - band, band * 2);
-      return add(geo, new Mesh(geo, leather));
-    };
-    const side = Math.PI / 2 - POUCH_HOLE;
-    this.pouch.push(cup(0, side), cup(Math.PI / 2 + POUCH_HOLE, side));
-    this.hole = cup(side, POUCH_HOLE * 2);
-    this.pouch.push(this.hole);
+    // a leather cup cradles the lower half of the ball, the steel sits in plain view above
+    // its rim; the bands leave from the cup's ends, tied with twine.
+    // once the ball is gone the cup folds flat
+    const inner = ballR * POUCH_GAP;
+    this.pouchR = inner + ballR * POUCH_THICK;
+    const cupGeo = shell(
+      inner,
+      this.pouchR,
+      -CUP_WRAP,
+      Math.PI + CUP_WRAP * 2,
+      CUP_RIM,
+      CUP_BASE - CUP_RIM,
+    );
+    this.pouch.push(add(cupGeo, new Mesh(cupGeo, leather)));
+    const endTh = (CUP_RIM + Math.PI / 2) / 2 + 0.25;
+    for (const [i, phi] of [-CUP_WRAP + 0.06, Math.PI + CUP_WRAP - 0.06].entries()) {
+      const rr = (inner + this.pouchR) / 2;
+      this.attach[i].set(
+        -rr * Math.cos(phi) * Math.sin(endTh),
+        rr * Math.cos(endTh),
+        rr * Math.sin(phi) * Math.sin(endTh),
+      );
+    }
+    const tieGeo = new CylinderGeometry(BAND_R * 1.7, BAND_R * 1.7, TIE_M, 12);
+    for (let i = 0; i < 2; i++) this.ties.push(add(tieGeo, new Mesh(tieGeo, twine)));
 
-    c.copy(rest)
-      .add(HANG)
-      .setX(rest.x - this.pouchR);
+    c.copy(rest).add(HANG).add(this.attach[0]);
     this.bandM = this.anchors[0].distanceTo(c) * BAND_SLACK;
 
     const steelBall = new SphereGeometry(ballR, 24, 16);
@@ -209,19 +226,20 @@ export class Sling {
       c.copy(this.rest).add(HANG);
       c.addScaledVector(a.subVectors(from, c), Number.isFinite(k) ? k : 0);
     }
-    l.copy(c).setX(c.x - this.pouchR);
-    r.copy(c).setX(c.x + this.pouchR);
-    this.drape(this.bands[0], this.anchors[0], l);
-    this.drape(this.bands[1], this.anchors[1], r);
     // fold flat only once the ball is clear of the leather
     const clear = loaded
       ? 0
       : Math.min(1, Math.max(0, (ball.distanceTo(c) - this.pouchR) / this.pouchR));
-    this.hole.visible = !loaded;
+    const flat = 1 + (FLAT - 1) * clear;
     for (const p of this.pouch) {
       p.position.copy(c);
-      p.scale.set(1, 1, 1 + (FLAT - 1) * clear);
+      p.scale.set(1, 1, flat);
     }
+    const [al, ar] = this.attach;
+    l.set(c.x + al.x, c.y + al.y, c.z + al.z * flat);
+    r.set(c.x + ar.x, c.y + ar.y, c.z + ar.z * flat);
+    this.drape(this.bands[0], this.ties[0], this.anchors[0], l);
+    this.drape(this.bands[1], this.ties[1], this.anchors[1], r);
     this.ball.position.copy(ball);
     const up = Math.max(0, ball.y - this.ballR);
     const k = Math.max(0, 1 - up / BLOB_FADE_M);
@@ -232,7 +250,7 @@ export class Sling {
   }
 
   // a band sags under its own weight until it is stretched past its natural length
-  private drape(chain: Mesh[], from: Vector3, to: Vector3) {
+  private drape(chain: Mesh[], tie: Mesh, from: Vector3, to: Vector3) {
     const d = from.distanceTo(to);
     const sag = d < this.bandM ? Math.sqrt((3 * d * (this.bandM - d)) / 8) : 0;
     p0.copy(from);
@@ -242,8 +260,12 @@ export class Sling {
       p1.y -= sag * Math.sin(Math.PI * u);
       span(chain[i], p0, p1);
       chain[i].scale.y += BAND_R; // overlap the joints
-      p0.copy(p1);
+      if (i < BAND_SEGS - 1) p0.copy(p1);
     }
+    // the tie sits on the band where it meets the leather
+    a.subVectors(p0, to).normalize();
+    tie.quaternion.setFromUnitVectors(UP, a);
+    tie.position.copy(to).addScaledVector(a, TIE_M * 0.35);
   }
 
   dispose() {
@@ -330,4 +352,43 @@ function softDot() {
     g.fillRect(0, 0, 64, 64);
   }
   return new CanvasTexture(cv);
+}
+
+// SHELL
+// a thick patch of a sphere: outer and inner skin plus four cut edges, so the leather has a rim.
+// same angles as SphereGeometry: phi around y from -x, theta down from +y
+function shell(r0: number, r1: number, phi0: number, phiLen: number, th0: number, thLen: number) {
+  const SEG_PHI = 12;
+  const SEG_TH = 8;
+  const pos: number[] = [];
+  const idx: number[] = [];
+  const at = (r: number, u: number, v: number) => {
+    const phi = phi0 + u * phiLen;
+    const th = th0 + v * thLen;
+    return [-r * Math.cos(phi) * Math.sin(th), r * Math.cos(th), r * Math.sin(phi) * Math.sin(th)];
+  };
+  // a grid of (n+1) x (m+1) points, each surface gets its own vertices so edges stay crisp
+  const grid = (n: number, m: number, pt: (i: number, j: number) => number[]) => {
+    const base = pos.length / 3;
+    for (let j = 0; j <= m; j++) for (let i = 0; i <= n; i++) pos.push(...pt(i, j));
+    for (let j = 0; j < m; j++) {
+      for (let i = 0; i < n; i++) {
+        const a = base + j * (n + 1) + i;
+        const b = a + 1;
+        const c = a + n + 1;
+        idx.push(a, c, b, b, c, c + 1);
+      }
+    }
+  };
+  grid(SEG_PHI, SEG_TH, (i, j) => at(r1, i / SEG_PHI, j / SEG_TH));
+  grid(SEG_PHI, SEG_TH, (i, j) => at(r0, i / SEG_PHI, j / SEG_TH));
+  grid(1, SEG_TH, (i, j) => at(i ? r1 : r0, 0, j / SEG_TH));
+  grid(1, SEG_TH, (i, j) => at(i ? r1 : r0, 1, j / SEG_TH));
+  grid(SEG_PHI, 1, (i, j) => at(j ? r1 : r0, i / SEG_PHI, 0));
+  grid(SEG_PHI, 1, (i, j) => at(j ? r1 : r0, i / SEG_PHI, 1));
+  const geo = new BufferGeometry();
+  geo.setAttribute("position", new Float32BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
 }
