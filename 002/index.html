@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Shatter · Codevember 002</title>
+    <meta
+      name="description"
+      content="A pane of glass you break, then scrub through time. Codevember day 2."
+    />
+    <link rel="icon" href="../favicon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#ebe5da" />
+    <style>
+      :root {
+        --accent: #2f6a5e;
+      }
+      .cv-figure canvas {
+        touch-action: none;
+      }
+      .cv-figure canvas:focus-visible {
+        outline: 1px solid var(--ink);
+        outline-offset: -8px;
+      }
+      .fig {
+        position: fixed;
+        top: 64px;
+        right: var(--gutter);
+        color: var(--muted);
+        text-align: right;
+      }
+      /* TIMELINE */
+      .scrub {
+        -webkit-appearance: none;
+        appearance: none;
+        width: min(240px, 60vw);
+        height: 24px;
+        margin: 0;
+        background: none;
+        cursor: pointer;
+        touch-action: none;
+      }
+      .scrub:disabled {
+        opacity: 0.35;
+        cursor: default;
+      }
+      .scrub::-webkit-slider-runnable-track {
+        height: 1px;
+        background: var(--ink);
+      }
+      .scrub::-moz-range-track {
+        height: 1px;
+        background: var(--ink);
+      }
+      .scrub::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 12px;
+        height: 12px;
+        margin-top: -5.5px;
+        border-radius: 50%;
+        background: var(--ink);
+      }
+      .scrub::-moz-range-thumb {
+        width: 12px;
+        height: 12px;
+        border: 0;
+        border-radius: 50%;
+        background: var(--ink);
+      }
+      .scrub:focus-visible {
+        outline: 1px solid var(--ink);
+        outline-offset: 4px;
+      }
+      .cv-btn:disabled {
+        opacity: 0.35;
+        pointer-events: none;
+      }
+      .still,
+      .live-only {
+        visibility: hidden;
+      }
+      [data-cv-live] .live-only {
+        visibility: visible;
+      }
+      [data-cv-still] .cv-hud,
+      [data-cv-still] [data-cv-canvas] {
+        display: none;
+      }
+      [data-cv-still] .still {
+        visibility: visible;
+        position: absolute;
+        left: 50%;
+        top: 44%;
+        height: min(56vh, 520px);
+        aspect-ratio: 1.6 / 2.1;
+        translate: -50% -50%;
+        box-shadow: 0 60px 40px -50px rgb(28 42 38 / 0.25);
+      }
+      .still canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      @media (max-width: 640px) {
+        .fig {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="cv-top mono">
+      <a href="../">Codevember ’26</a>
+      <span>Day 002 of 030</span>
+      <nav data-cv-nav aria-label="Days"></nav>
+    </header>
+
+    <main data-cv>
+      <div class="cv-figure">
+        <canvas
+          data-cv-canvas
+          tabindex="0"
+          aria-label="A stained glass window, a slingshot below. Drag back and let go to shoot it, then press and hold to rewind. Enter shoots or plays, arrow keys step time."
+        ></canvas>
+        <div
+          class="still"
+          role="img"
+          aria-label="A stained glass window: a sun of rings over arches and a fan lotus"
+        ></div>
+      </div>
+
+      <p class="fig mono">Fig. 2<br />Leaded glass, 6 mm</p>
+
+      <section class="cv-title">
+        <span class="mono">No. 002</span>
+        <h1>Shatter<em>.</em></h1>
+        <p>
+          <em>Break it, then hold the moment.</em> Pull the sling and let go. Hold to rewind, or
+          drag the timeline to stop it mid-air.
+        </p>
+      </section>
+
+      <aside class="cv-hud mono live-only">
+        <dl>
+          <dt>Time</dt>
+          <dd data-cv-time>0.00 s</dd>
+          <dt>Pieces</dt>
+          <dd data-cv-count>1</dd>
+        </dl>
+        <input
+          type="range"
+          class="scrub"
+          data-cv-scrub
+          min="0"
+          max="3.6"
+          step="0.01"
+          value="0"
+          aria-label="Time"
+          disabled
+        />
+        <span data-cv-hint aria-live="polite">Pull the sling back, let go</span>
+        <button type="button" class="cv-btn" data-cv-rewind disabled>Rewind</button>
+      </aside>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
