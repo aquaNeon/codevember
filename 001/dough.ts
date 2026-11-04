@@ -34,6 +34,7 @@ const FOLDS_TO_REST = 4;
 const SHADOW_PX = 1024;
 const ROUGH = 0.72;
 const DROP_Y = 3.4; // fresh dough falls in from above the frame
+const INTRO = { height: 1.6, fallS: 0.42, wobbleS: 0.9, squash: 0.2, hz: 2.6, decay: 5 }; // first-load drop, tweak feel here
 const OFFSCREEN_S = 0.45;
 const EDGE_NDC = 1.0;
 const LOST_SHARE = 0.3; // share of the dough outside the frame that counts as thrown away
@@ -74,6 +75,9 @@ export class Dough {
   private visible = false;
   private sized = false;
   private ready = false;
+  private shown = false;
+  // seconds into the intro drop, -1 once it has landed
+  private intro = -1;
   // the first frames only draw the spawn shape; physics wakes on the first touch, so load stays cheap
   private dormant = true;
   private quiet = 0;
@@ -193,6 +197,7 @@ export class Dough {
       .catch(() => {})
       .then(() => {
         this.ready = true;
+        if (!this.reducedMotion) this.intro = 0;
         this.wake();
       });
 
@@ -230,6 +235,7 @@ export class Dough {
   // PUBLIC
   reset() {
     this.dormant = false;
+    if (this.intro >= 0) this.land();
     this.sim.reset(DROP_Y);
     // the towel gets whipped off while the fresh lump drops in
     if (this.cloth.covering) this.cloth.lift();
@@ -279,6 +285,7 @@ export class Dough {
     this.planeN.copy(fwd);
     this.planeD = -(fwd.x * this.hx + fwd.y * this.hy + fwd.z * this.hz);
     this.dormant = false;
+    if (this.intro >= 0) this.land();
     this.sim.grab(this.hx, this.hy, this.hz);
     this.quiet = 0;
     this.wake();
@@ -410,14 +417,51 @@ export class Dough {
       }
     }
 
-    this.surface.update(this.sim.x, this.sim.n, this.sim.ca, this.sim.cb);
-    this.track();
+    // asleep, the shape cannot change, so the surface is built once
+    if (!this.dormant || !this.shown) {
+      this.surface.update(this.sim.x, this.sim.n, this.sim.ca, this.sim.cb);
+      this.track();
+    }
+    if (this.intro >= 0) {
+      this.drop(dt);
+      active = true;
+    }
     this.renderer.render(this.scene, this.camera);
+    if (!this.shown) {
+      this.shown = true;
+      this.canvas.setAttribute("data-cv-shown", "");
+    }
     // dormant: nothing changes until the first touch, so one frame is enough
-    this.quiet = this.dormant ? SETTLE_FRAMES : active ? 0 : this.quiet + 1;
+    this.quiet = this.dormant && this.intro < 0 ? SETTLE_FRAMES : active ? 0 : this.quiet + 1;
     if (this.quiet < SETTLE_FRAMES) this.wake();
     else this.last = 0;
   };
+
+  // INTRO
+  // the mesh falls and squashes on its own, the sim stays asleep so load costs nothing
+  private drop(dt: number) {
+    const t = (this.intro += dt);
+    const { height, fallS, wobbleS, squash, hz, decay } = INTRO;
+    const b = this.blob;
+    if (t < fallS) {
+      const k = t / fallS;
+      const st = 0.06 * k; // a little stretch on the way down
+      b.position.y = height * (1 - k * k);
+      b.scale.set(1 - st * 0.5, 1 + st, 1 - st * 0.5);
+    } else if (t < fallS + wobbleS) {
+      const u = t - fallS;
+      const sq = squash * Math.exp(-u * decay) * Math.cos(u * hz * Math.PI * 2);
+      b.position.y = 0;
+      b.scale.set(1 + sq * 0.5, 1 - sq, 1 + sq * 0.5);
+    } else this.land();
+    this.contact.visible = b.position.y < 0.1;
+  }
+
+  private land() {
+    this.intro = -1;
+    this.blob.position.y = 0;
+    this.blob.scale.set(1, 1, 1);
+  }
 
   // THROWN OUT
   // a lump that stays outside the frame is replaced by a fresh one
