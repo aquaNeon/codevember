@@ -32,9 +32,9 @@ export const DAYS = [
 ] as const;
 
 // add a day here once it ships
-export const READY = new Set([1, 2]);
+export const READY = new Set([1, 2, 3]);
 
 export const pad = (n: number) => String(n).padStart(3, "0");
 
 // accent per shipped day, used by the index hover; each ready day also needs public/thumbs/<nnn>.jpg
-export const ACCENT: Record<number, string> = { 1: "#a86a32", 2: "#2f6a5e" };
+export const ACCENT: Record<number, string> = { 1: "#a86a32", 2: "#2f6a5e", 3: "#c9ff3d" };

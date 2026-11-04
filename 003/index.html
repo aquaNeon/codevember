@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Melt · Codevember 003</title>
+    <meta
+      name="description"
+      content="A word that runs down the screen like hot paint. Codevember day 3."
+    />
+    <link
+      rel="preload"
+      href="/fonts/instrument-serif.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/fonts/instrument-serif-italic.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="icon" href="../favicon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#0b0806" />
+    <style>
+      /* DARK ROOM */
+      /* this day only: the candle is the light, the page goes dark around it.
+         doubled selector so it wins over the shared sheet that loads after it */
+      :root:root {
+        --bone: #050405;
+        --bone-hi: #0b090b;
+        --ink: #efe4d4;
+        --muted: #9c8f7e;
+        --rule: rgb(239 228 212 / 0.14);
+        --accent: #c9ff3d;
+        color-scheme: dark;
+      }
+      body::after {
+        mix-blend-mode: screen;
+        opacity: 0.12;
+      }
+      .cv-figure canvas {
+        position: relative;
+        touch-action: none;
+      }
+      .fig {
+        position: fixed;
+        top: 64px;
+        right: var(--gutter);
+        color: var(--muted);
+        text-align: right;
+      }
+      .still,
+      .live-only {
+        visibility: hidden;
+      }
+      [data-cv-live] .live-only {
+        visibility: visible;
+      }
+      [data-cv-still] .cv-figure canvas {
+        display: none;
+      }
+      [data-cv-still] .still {
+        visibility: visible;
+        position: absolute;
+        left: 50%;
+        top: 36%;
+        translate: -50% -50%;
+        font: 400 clamp(120px, 26vw, 340px) / 1 var(--serif);
+        background: linear-gradient(180deg, #f2ff4d 30%, #4dff8f 55%, #1ab3ff 80%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+      .word {
+        font: inherit;
+        color: var(--ink);
+        background: none;
+        border: 0;
+        border-bottom: 1px solid var(--rule);
+        width: 10ch;
+        text-align: right;
+        padding: 2px 0;
+      }
+      .word:focus-visible {
+        outline: none;
+        border-bottom-color: var(--ink);
+      }
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+      }
+      @media (max-width: 640px) {
+        .fig {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="cv-top mono">
+      <a href="../">Codevember ’26</a>
+      <span>Day 003 of 030</span>
+      <nav data-cv-nav aria-label="Days"></nav>
+    </header>
+
+    <main data-cv>
+      <div class="cv-figure">
+        <canvas
+          data-cv-canvas
+          aria-label="A word in large serif letters, its paint running down the screen in long coloured streaks. Touch the streaks to send ripples through them."
+        ></canvas>
+        <div class="still" aria-hidden="true">melt</div>
+      </div>
+
+      <p class="fig mono">Fig. 3<br />Paint, still wet</p>
+      <section class="sr-only">
+        <h1>Melt</h1>
+        <p>A word that runs down the screen like wet paint. Touch the streaks to ripple them.</p>
+      </section>
+
+      <aside class="cv-hud mono live-only">
+        <label class="row">
+          <span>Word</span>
+          <input
+            class="word mono"
+            data-cv-word
+            value="melt"
+            maxlength="10"
+            spellcheck="false"
+            autocomplete="off"
+          />
+        </label>
+        <div class="row">
+          <button type="button" class="cv-btn" data-cv-palette>acid</button>
+          <button type="button" class="cv-btn" data-cv-pour>Pour again</button>
+        </div>
+      </aside>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
