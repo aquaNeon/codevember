@@ -1,0 +1,37 @@
+export const DAYS = [
+  "Fold",
+  "Shatter",
+  "Melt",
+  "Tangle",
+  "Moss",
+  "Orrery",
+  "Hollow",
+  "Tesseract",
+  "Membrane",
+  "Caustic",
+  "Rust",
+  "Feather",
+  "Labyrinth",
+  "Tension",
+  "Mirage",
+  "Spore",
+  "Kelp",
+  "Pendulum",
+  "Erosion",
+  "Cocoon",
+  "Bolt",
+  "Echo",
+  "Magma",
+  "Nest",
+  "Veil",
+  "Anamorph",
+  "Burrow",
+  "Hive",
+  "Portal",
+  "Dissolve",
+] as const;
+
+// add a day here once it ships
+export const READY = new Set([1]);
+
+export const pad = (n: number) => String(n).padStart(3, "0");
