@@ -4,8 +4,8 @@ import { mountNav } from "../shared/nav";
 const DAY = 1;
 const HINT = {
   fold: "Lift an edge, fold it over",
-  rest: "Rest. Let it rise",
-  covered: "Resting. Poke it, or start a new dough",
+  rest: "Four folds. Let it rest",
+  covered: "Resting. New dough for another round",
 } as const;
 
 const root = document.querySelector<HTMLElement>("[data-cv]");

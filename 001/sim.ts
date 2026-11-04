@@ -14,22 +14,25 @@ const VOLUME_COMPLIANCE = 0;
 const YIELD = 0.04; // strain before the dough keeps its new shape
 const PLASTIC_TAU_S = 0.05;
 const REST_MIN = 0.45;
-const REST_MAX = 2.0; // longest a link may plastically grow
+const REST_MAX = 1.6; // longest a link may plastically grow
 const LIFT_MAX = 2.6; // highest a grab can lift, keeps the dough inside the surface grid
 const CEIL_Y = 3.0; // a fling stops here instead of leaving the grid
+const BACK_Z = -1.45; // invisible wall just behind the dough, it never drifts up the frame
 const TEAR_MAX = 2.8; // longest a link may stretch at any moment, relative to its rest length
+const SPAN_MAX = 2.6; // and relative to its original length, so stretching again never opens gaps the skin cannot cover
 const LINK_SHELL_CORE = 0.32;
 const LINK_CORE = 0.34;
 const CORE_STEP = 0.2;
 const RADIUS = 0.055;
 const SKIP_COLLIDE = 0.4;
 const STICK = 0.6; // how hard the bench holds a touching particle down, per substep
-const FLOOR_FRICTION = 0.3; // sideways drag on the bench, per substep
-const BREAK = 0.06; // how far a stuck particle stretches before it lets go
-const GRAB = { along: 0.85, deep: 0.38, tall: 0.6 }; // half sizes of the grabbed strip
+export const GRIP = { fold: 0.85, throw: 0.3, rest: 0.6 }; // sideways drag on the bench, per substep
+const BREAK = 0.06;
+const BREAK_HELD = 0.3; // while folding the bottom clings this far before it peels, so a pull stretches instead of lifting a slab
+const PIN_SLIP = 0.22; // how far a pinned base particle stretches sideways before it slips
+const PIN_GIVE = 0.15; // share of the pull a pinned particle follows each substep // how far a stuck particle stretches before it lets go
+const GRAB = { along: 0.85, deep: 0.26, tall: 0.6 }; // half sizes of the grabbed strip
 const GRAB_PULL = 0.45;
-const POKE_SPEED = 2.6;
-const POKE_RADIUS = 0.45;
 const SLEEP_SPEED = 0.06;
 const HASH_SIZE = 4096;
 const TENSION = 0.02; // surface tension per substep, irons out spikes and creases
@@ -38,7 +41,6 @@ const FUSE_TAU_S = 4; // folded layers melt into each other once things slow dow
 const FUSE_SPEED = 0.6;
 const SLUMP_S = 1.2; // after a release the dough flows a little and sinks into itself
 const SLUMP_TAU_S = 2.5;
-const RISE_TAU_S = 0.7;
 const COLLIDE_EVERY = 1; // less often is cheaper but layers jitter
 
 export type Mesh = { pos: Float32Array; faces: Uint16Array };
@@ -132,6 +134,7 @@ export class DoughSim {
   private v: Float32Array;
   private spawn: Float32Array;
   private stuck: Uint8Array;
+  private pin: Float32Array;
   private mem: Float32Array;
   private adjStart: Int32Array;
   private adj: Uint16Array;
@@ -145,9 +148,6 @@ export class DoughSim {
 
   private grad: Float32Array;
   private volume0 = 0;
-  private volumeTarget = 0;
-  private restScale = 1;
-  private restScaleTarget = 1;
 
   private cellStart = new Int32Array(HASH_SIZE + 1);
   private cellItems: Int32Array;
@@ -163,6 +163,10 @@ export class DoughSim {
 
   damp = DAMP_PER_S;
   speed = 0;
+  // set by the gesture: heavy while folding, loose while throwing
+  grip = GRIP.rest;
+  // true while folding: the part on the bench is pinned instead of only dragged
+  pinned = false;
   private slump = 0;
 
   constructor(shell: Mesh) {
@@ -199,6 +203,7 @@ export class DoughSim {
     this.v = new Float32Array(this.n * 3);
     this.spawn = new Float32Array(pts);
     this.stuck = new Uint8Array(this.n);
+    this.pin = new Float32Array(this.n * 3);
     this.mem = new Float32Array(pts);
     this.avg = new Float32Array(sN * 3);
     this.grad = new Float32Array(sN * 3);
@@ -261,16 +266,10 @@ export class DoughSim {
     for (let k = 0; k < a.length; k++) this.rest0[k] = Math.sqrt(d2(a[k], b[k]));
     this.rest = this.rest0.slice();
     this.volume0 = this.volume(this.x);
-    this.volumeTarget = this.volume0;
   }
 
   get links() {
     return this.ca.length;
-  }
-
-  // rest shape scales up, volume follows
-  rise(amount: number) {
-    this.restScaleTarget = amount;
   }
 
   // STEP
@@ -279,16 +278,6 @@ export class DoughSim {
     const n = this.n;
     const { x, p, v } = this;
     const damp = Math.exp(-this.damp * h);
-
-    // ease the proof
-    const k = 1 - Math.exp(-dt / RISE_TAU_S);
-    const prev = this.restScale;
-    this.restScale += (this.restScaleTarget - this.restScale) * k;
-    if (prev !== this.restScale) {
-      const r = this.restScale / prev;
-      for (let i = 0; i < this.rest.length; i++) this.rest[i] *= r;
-      this.volumeTarget = this.volume0 * this.restScale ** 3;
-    }
 
     let maxV2 = 0;
     for (let s = 0; s < SUBSTEPS; s++) {
@@ -325,16 +314,11 @@ export class DoughSim {
     this.fuse(dt);
     if (this.slump > 0) this.slump -= dt;
     this.speed = Math.sqrt(maxV2);
-    return (
-      this.grabN > 0 ||
-      this.slump > 0 ||
-      this.speed > SLEEP_SPEED ||
-      Math.abs(this.restScaleTarget - this.restScale) > 4e-3
-    );
+    return this.grabN > 0 || this.slump > 0 || this.speed > SLEEP_SPEED;
   }
 
   private links_(h: number) {
-    const { p, ca, cb, rest, comp } = this;
+    const { p, ca, cb, rest, rest0, comp } = this;
     const ih2 = 1 / (h * h);
     for (let k = 0; k < ca.length; k++) {
       const i = ca[k] * 3,
@@ -345,10 +329,9 @@ export class DoughSim {
       const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
       if (len < 1e-6) continue;
       // past the hard limit the link stops being soft, so a fast yank can't tear bits off
-      const hard = len > rest[k] * TEAR_MAX;
-      const corr = hard
-        ? (len - rest[k] * TEAR_MAX) / (len * 2)
-        : (len - rest[k]) / (len * (2 + comp[k] * ih2));
+      const lim = Math.min(rest[k] * TEAR_MAX, rest0[k] * SPAN_MAX);
+      const hard = len > lim;
+      const corr = hard ? (len - lim) / (len * 2) : (len - rest[k]) / (len * (2 + comp[k] * ih2));
       p[i] -= dx * corr;
       p[i + 1] -= dy * corr;
       p[i + 2] -= dz * corr;
@@ -410,7 +393,7 @@ export class DoughSim {
       grad[i] /= 6;
       sum += grad[i] * grad[i];
     }
-    const lambda = -(vol - this.volumeTarget) / (sum + VOLUME_COMPLIANCE / (h * h));
+    const lambda = -(vol - this.volume0) / (sum + VOLUME_COMPLIANCE / (h * h));
     for (let i = 0; i < grad.length; i++) p[i] += lambda * grad[i];
   }
 
@@ -487,22 +470,44 @@ export class DoughSim {
   // STICKY BENCH
   // a particle that touches the bench is pinned to that spot until pulled past BREAK, so lifting peels
   private floor() {
-    const { p, x, n, stuck } = this;
+    const { p, x, n, stuck, pin } = this;
     const keep = 1 - STICK;
+    const holding = this.pinned;
+    const slip2 = PIN_SLIP * PIN_SLIP;
+    const brk = holding ? BREAK_HELD : BREAK;
     for (let i = 0; i < n; i++) {
       const o = i * 3;
       if (p[o + 1] > CEIL_Y) p[o + 1] = CEIL_Y;
+      if (p[o + 2] < BACK_Z) p[o + 2] = BACK_Z;
       if (p[o + 1] < RADIUS) {
         p[o + 1] = RADIUS;
-        stuck[i] = 1;
+        if (!stuck[i]) {
+          stuck[i] = 1;
+          pin[o] = p[o];
+          pin[o + 2] = p[o + 2];
+        }
       }
       if (!stuck[i]) continue;
-      // sideways: heavy friction, not a pin, so the skin slides with the body instead of tearing into a lip
-      p[o] -= (p[o] - x[o]) * FLOOR_FRICTION;
-      p[o + 2] -= (p[o + 2] - x[o + 2]) * FLOOR_FRICTION;
+      if (holding) {
+        // pinned to where it landed; pulled past PIN_SLIP it slips and grips again further on
+        const dx = p[o] - pin[o],
+          dz = p[o + 2] - pin[o + 2];
+        if (dx * dx + dz * dz > slip2) {
+          pin[o] = p[o];
+          pin[o + 2] = p[o + 2];
+        } else {
+          p[o] = pin[o] + dx * PIN_GIVE;
+          p[o + 2] = pin[o + 2] + dz * PIN_GIVE;
+        }
+      } else {
+        p[o] -= (p[o] - x[o]) * this.grip;
+        p[o + 2] -= (p[o + 2] - x[o + 2]) * this.grip;
+        pin[o] = p[o];
+        pin[o + 2] = p[o + 2];
+      }
       // upward: held until pulled past BREAK
       const dy = p[o + 1] - RADIUS;
-      if (dy > BREAK) {
+      if (dy > brk) {
         stuck[i] = 0;
         continue;
       }
@@ -549,7 +554,6 @@ export class DoughSim {
   private yieldRest(dt: number) {
     const { x, ca, cb, rest, rest0 } = this;
     const k = 1 - Math.exp(-dt / PLASTIC_TAU_S);
-    const scale = this.restScale;
     const creep = this.slump > 0 ? (1 - Math.exp(-dt / SLUMP_TAU_S)) / k : 0;
     for (let c = 0; c < ca.length; c++) {
       const i = ca[c] * 3,
@@ -566,7 +570,7 @@ export class DoughSim {
       else if (len < lo) t = len / (1 - YIELD);
       else if (creep > 0) t = r + (len - r) * creep;
       else continue;
-      const base = rest0[c] * scale;
+      const base = rest0[c];
       const next = r + (t - r) * k;
       rest[c] = Math.min(base * REST_MAX, Math.max(base * REST_MIN, next));
     }
@@ -624,11 +628,13 @@ export class DoughSim {
   drag(tx: number, ty: number, tz: number) {
     this.gx = tx;
     this.gy = Math.min(LIFT_MAX, Math.max(ty, RADIUS * 2));
-    this.gz = tz;
+    this.gz = Math.max(tz, BACK_Z + 0.25);
   }
 
   release() {
     this.grabN = 0;
+    this.grip = GRIP.rest;
+    this.pinned = false;
     this.slump = SLUMP_S;
   }
 
@@ -643,24 +649,6 @@ export class DoughSim {
     }
   }
 
-  // push particles near the hit along a direction, for a quick squish
-  poke(hx: number, hy: number, hz: number, dx: number, dy: number, dz: number) {
-    const { x, v, n } = this;
-    for (let i = 0; i < n; i++) {
-      const o = i * 3;
-      const ex = x[o] - hx,
-        ey = x[o + 1] - hy,
-        ez = x[o + 2] - hz;
-      const d = Math.sqrt(ex * ex + ey * ey + ez * ez);
-      if (d > POKE_RADIUS) continue;
-      const f = (1 - d / POKE_RADIUS) * POKE_SPEED;
-      v[o] += dx * f;
-      v[o + 1] += dy * f;
-      v[o + 2] += dz * f;
-    }
-  }
-
-  // lift raises the fresh lump so it can drop in from above the frame
   reset(lift = 0) {
     const { x, p, spawn } = this;
     for (let i = 0; i < x.length; i += 3) {
@@ -672,9 +660,6 @@ export class DoughSim {
     this.stuck.fill(0);
     this.v.fill(0);
     this.rest.set(this.rest0);
-    this.restScale = 1;
-    this.restScaleTarget = 1;
-    this.volumeTarget = this.volume0;
     this.grabN = 0;
     this.slump = SLUMP_S;
   }

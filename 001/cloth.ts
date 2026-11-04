@@ -10,7 +10,7 @@ import {
 import type { Blobs } from "./blobs";
 
 // TEA TOWEL
-// small-step pbd grid that drops over the resting dough and gets whipped off on tap
+// small-step pbd grid that drops over the resting dough and gets whipped off for a new dough
 
 const SIDE = 36; // particles per edge
 const SIZE = 2.9; // world units
@@ -19,7 +19,7 @@ const GRAVITY = -9;
 const DAMP_PER_S = 3.2; // air drag, keeps the fall floaty
 const STRETCH_COMPLIANCE = 1e-6;
 const BEND_COMPLIANCE = 2e-4; // lower = stiffer linen
-const SKIN_MARGIN = 0.25; // how far outside the drawn skin the towel rests, as a share of the iso level
+const SKIN_MARGIN = 0.4; // how far outside the drawn skin the towel rests, as a share of the iso level
 const FLOOR_Y = 0.012;
 const DROP_Y = 1.9;
 const SETTLE_SPEED = 0.35; // below this for SETTLE_S the towel stops simulating
@@ -192,7 +192,8 @@ export class Cloth {
   step(dt: number, skin: Blobs, doughMoving: boolean) {
     if (!this.mesh.visible) return false;
     if (this.asleep) {
-      if (!doughMoving) return false;
+      // dough can still creep below the sleep threshold; wake as soon as it reaches the towel
+      if (!doughMoving && !skin.touches(this.x, this.n, SKIN_MARGIN * 0.5)) return false;
       this.asleep = false;
       this.calm = 0;
     }
