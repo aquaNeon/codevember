@@ -17,6 +17,13 @@ export const BLOB = {
 
 const SIZE = [6.6, 3.4, 6.6]; // grid extent, it follows the dough so nothing gets clipped
 const MAX_TRIS = 40000;
+const CREASE = {
+  near: 0.26, // sample distances outside the skin, past the reach of its own blobs
+  far: 0.46,
+  full: 0.3, // field (as share of iso) that counts as fully tucked in
+  depth: 0.55, // how dark a seam gets
+  warm: 0.94, // seams lean warm brown instead of grey
+};
 const PICK_FAR = 40; // longest pick ray in world units
 
 // cube corners as (x, y, z) offsets, three's corner order
@@ -32,6 +39,7 @@ export class Blobs {
   private tmp: Float32Array;
   private pos = new Float32Array(MAX_TRIS * 9);
   private nor = new Float32Array(MAX_TRIS * 9);
+  private col = new Float32Array(MAX_TRIS * 9).fill(1);
   // per cube scratch: 12 edge vertices and normals
   private ev = new Float32Array(36);
   private en = new Float32Array(36);
@@ -55,6 +63,7 @@ export class Blobs {
     this.tmp = new Float32Array(this.field.length);
     this.geometry.setAttribute("position", new BufferAttribute(this.pos, 3));
     this.geometry.setAttribute("normal", new BufferAttribute(this.nor, 3));
+    this.geometry.setAttribute("color", new BufferAttribute(this.col, 3));
     this.geometry.setDrawRange(0, 0);
   }
 
@@ -205,6 +214,32 @@ export class Blobs {
       }
     }
     this.geometry.setDrawRange(0, v / 3);
+
+    // CREASES
+    // dough just outside a vertex means another layer is pressed against it: darken, so fold seams read
+    const { col } = this;
+    const lim = BLOB.iso * CREASE.full;
+    for (let o = 0; o < v; o += 3) {
+      const px = pos[o],
+        py = pos[o + 1],
+        pz = pos[o + 2];
+      const qx = nor[o],
+        qy = nor[o + 1],
+        qz = nor[o + 2];
+      const f = Math.max(
+        this.sample(px + qx * CREASE.near, py + qy * CREASE.near, pz + qz * CREASE.near),
+        this.sample(px + qx * CREASE.far, py + qy * CREASE.far, pz + qz * CREASE.far),
+      );
+      const t = Math.min(1, f / lim);
+      const g = 1 - CREASE.depth * t * t * (3 - 2 * t);
+      col[o] = g;
+      col[o + 1] = g * CREASE.warm;
+      col[o + 2] = g * CREASE.warm * CREASE.warm;
+    }
+    const ca = this.geometry.attributes.color as BufferAttribute;
+    ca.clearUpdateRanges();
+    ca.addUpdateRange(0, v);
+    ca.needsUpdate = true;
     const pa = this.geometry.attributes.position as BufferAttribute;
     const na = this.geometry.attributes.normal as BufferAttribute;
     pa.clearUpdateRanges();
